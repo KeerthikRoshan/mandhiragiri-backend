@@ -2,13 +2,20 @@ const { body, validationResult } = require('express-validator');
 const { sendError } = require('../utils/response');
 
 /**
- * Middleware to evaluate express-validator results
+ * Middleware to evaluate express-validator results with bilingual error formatting
  */
 const validate = (validations) => {
   return async (req, res, next) => {
-    // Gracefully normalize mobileNumber alias to mobile if provided
-    if (req.body && !req.body.mobile && req.body.mobileNumber) {
-      req.body.mobile = req.body.mobileNumber;
+    // Gracefully normalize payload: support mobileNumber, mobile, phone, and countryCode
+    if (req.body) {
+      if (!req.body.mobileNumber && req.body.mobile) {
+        req.body.mobileNumber = req.body.mobile;
+      } else if (!req.body.mobileNumber && req.body.phone) {
+        req.body.mobileNumber = req.body.phone;
+      }
+      if (!req.body.mobile && req.body.mobileNumber) {
+        req.body.mobile = req.body.mobileNumber;
+      }
     }
 
     for (const validation of validations) {
@@ -21,28 +28,42 @@ const validate = (validations) => {
       return next();
     }
 
-    const formattedErrors = errors.array().map((err) => ({
-      field: err.path,
-      message: err.msg
-    }));
+    const errorList = errors.array();
+    const errorsMap = {};
+    let primaryMessage = 'Validation failed for the submitted fields.';
 
-    return sendError(res, 'Validation failed', 422, formattedErrors);
+    for (const err of errorList) {
+      const fieldKey = err.path === 'mobile' ? 'mobileNumber' : err.path;
+      if (!errorsMap[fieldKey]) {
+        errorsMap[fieldKey] = err.msg;
+      }
+      if (fieldKey === 'mobileNumber') {
+        primaryMessage = 'சரியான 10 இலக்க இந்திய மொபைல் எண்ணை உள்ளிடவும்.';
+      }
+    }
+
+    return sendError(res, primaryMessage, 400, errorsMap);
   };
 };
 
 /**
- * Validation rules for user login
+ * Validation rules for user login (Admin / Staff)
  */
 const loginRules = [
-  body('mobile')
+  body('mobileNumber')
     .trim()
     .notEmpty()
-    .withMessage('Mobile number is required')
-    .matches(/^[0-9]{10,15}$/)
-    .withMessage('Invalid mobile number format. Please provide 10 to 15 digits.'),
+    .withMessage('Enter a valid 10-digit Indian mobile number.')
+    .customSanitizer((val) => {
+      // Strip any whitespace, dashes, or leading +91
+      const digits = String(val).replace(/\D/g, '');
+      return digits.length > 10 && digits.startsWith('91') ? digits.slice(-10) : digits;
+    })
+    .matches(/^[6-9]\d{9}$/)
+    .withMessage('Enter a valid 10-digit Indian mobile number.'),
   body('password')
     .notEmpty()
-    .withMessage('Password is required')
+    .withMessage('Password is required.')
 ];
 
 /**
@@ -52,7 +73,7 @@ const refreshRules = [
   body('refreshToken')
     .trim()
     .notEmpty()
-    .withMessage('Refresh token is required')
+    .withMessage('Refresh token is required.')
 ];
 
 /**
@@ -61,12 +82,10 @@ const refreshRules = [
 const changePasswordRules = [
   body('currentPassword')
     .notEmpty()
-    .withMessage('Current password is required'),
+    .withMessage('Current password is required.'),
   body('newPassword')
-    .isLength({ min: 8 })
-    .withMessage('New password must be at least 8 characters long')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('New password must contain at least one uppercase letter, one lowercase letter, and one number')
+    .isLength({ min: 6 })
+    .withMessage('New password must be at least 6 characters long.')
 ];
 
 module.exports = {

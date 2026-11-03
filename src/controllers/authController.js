@@ -3,22 +3,43 @@ const { sendSuccess } = require('../utils/response');
 const asyncHandler = require('../utils/asyncHandler');
 
 /**
- * Handle user login
+ * Handle user login (Admin / Multi-role)
  */
 const login = asyncHandler(async (req, res) => {
-  const mobile = req.body.mobile || req.body.mobileNumber;
-  const { password } = req.body;
+  const { mobileNumber, mobile, phone, password, role } = req.body;
+  const targetMobile = mobileNumber || mobile || phone;
   const ipAddress = req.ip || req.socket.remoteAddress;
   const userAgent = req.headers['user-agent'];
 
   const result = await authService.loginUser({
-    mobile,
+    mobileNumber: targetMobile,
     password,
+    role: role || null,
     ipAddress,
     userAgent
   });
 
-  return sendSuccess(res, 'Login successful', result, 200);
+  return sendSuccess(res, result.message, result.data, 200);
+});
+
+/**
+ * Handle staff login specifically (POST /api/v1/auth/staff-login)
+ */
+const staffLogin = asyncHandler(async (req, res) => {
+  const { mobileNumber, mobile, phone, password } = req.body;
+  const targetMobile = mobileNumber || mobile || phone;
+  const ipAddress = req.ip || req.socket.remoteAddress;
+  const userAgent = req.headers['user-agent'];
+
+  const result = await authService.loginUser({
+    mobileNumber: targetMobile,
+    password,
+    role: 'staff',
+    ipAddress,
+    userAgent
+  });
+
+  return sendSuccess(res, result.message, result.data, 200);
 });
 
 /**
@@ -35,7 +56,7 @@ const refresh = asyncHandler(async (req, res) => {
     userAgent
   });
 
-  return sendSuccess(res, 'Token refreshed successfully', result, 200);
+  return sendSuccess(res, 'Session token refreshed successfully.', result, 200);
 });
 
 /**
@@ -50,7 +71,7 @@ const logout = asyncHandler(async (req, res) => {
     userId
   });
 
-  return sendSuccess(res, 'Logged out successfully', null, 200);
+  return sendSuccess(res, 'Logged out successfully.', null, 200);
 });
 
 /**
@@ -60,7 +81,7 @@ const getMe = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const result = await authService.getCurrentUser(userId);
 
-  return sendSuccess(res, 'User profile fetched successfully', result, 200);
+  return sendSuccess(res, 'User profile fetched successfully.', result, 200);
 });
 
 /**
@@ -78,7 +99,7 @@ const changePassword = asyncHandler(async (req, res) => {
 
   return sendSuccess(
     res,
-    'Password changed successfully. Please log in again with your new password.',
+    'கடவுச்சொல் வெற்றிகரமாக மாற்றப்பட்டது (Password changed successfully).',
     null,
     200
   );
@@ -86,6 +107,7 @@ const changePassword = asyncHandler(async (req, res) => {
 
 module.exports = {
   login,
+  staffLogin,
   refresh,
   logout,
   getMe,

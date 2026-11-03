@@ -14,7 +14,7 @@ const router = express.Router();
 
 /**
  * @route   POST /api/v1/auth/login
- * @desc    Authenticate user using mobile and password
+ * @desc    Authenticate user (Admin or Staff) using mobile number and password
  * @access  Public
  */
 router.post(
@@ -22,6 +22,18 @@ router.post(
   loginRateLimiter,
   validateLogin,
   authController.login
+);
+
+/**
+ * @route   POST /api/v1/auth/staff-login
+ * @desc    Staff Sign In (Priests and Assistants Portal)
+ * @access  Public
+ */
+router.post(
+  '/staff-login',
+  loginRateLimiter,
+  validateLogin,
+  authController.staffLogin
 );
 
 /**
@@ -58,7 +70,7 @@ router.get(
 
 /**
  * @route   POST /api/v1/auth/change-password
- * @desc    Change password and clear must_change_password flag
+ * @desc    Change password
  * @access  Private (Requires Bearer token)
  */
 router.post(

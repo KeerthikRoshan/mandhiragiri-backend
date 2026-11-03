@@ -22,30 +22,43 @@ const getRefreshTokenExpiry = () => {
 };
 
 /**
- * Authenticate user with mobile and password
- * @param {Object} credentials - { mobile, password, ipAddress, userAgent }
+ * Authenticate user with mobile, password, and optional role
+ * @param {Object} credentials - { mobileNumber, password, role, ipAddress, userAgent }
  */
-const loginUser = async ({ mobile, password, ipAddress, userAgent }) => {
-  const user = await authModel.findUserByMobile(mobile);
+const loginUser = async ({ mobileNumber, password, role, ipAddress, userAgent }) => {
+  const targetMobile = mobileNumber;
+  const user = await authModel.findUserByMobileAndRole(targetMobile, role);
 
   if (!user) {
     // Perform dummy compare to prevent timing side-channels
     await bcrypt.compare(password, DUMMY_HASH);
-    throw ApiError.unauthorized('Invalid mobile number or password');
+    throw new ApiError(
+      401,
+      'மொபைல் எண் அல்லது கடவுச்சொல் தவறானது.',
+      true,
+      { credentials: 'Invalid mobile number or password.' }
+    );
   }
 
   const isPasswordValid = await bcrypt.compare(password, user.password_hash);
   if (!isPasswordValid) {
-    throw ApiError.unauthorized('Invalid mobile number or password');
+    throw new ApiError(
+      401,
+      'மொபைல் எண் அல்லது கடவுச்சொல் தவறானது.',
+      true,
+      { credentials: 'Invalid mobile number or password.' }
+    );
   }
 
   // Check account status
-  if (user.status !== 'ACTIVE') {
-    throw ApiError.unauthorized('Invalid mobile number or password');
+  if (user.status !== 'active') {
+    throw new ApiError(
+      403,
+      'தங்கள் பணியாளர் கணக்கு தற்போது முடக்கப்பட்டுள்ளது.',
+      true,
+      { account: 'Account is currently inactive. Contact chief administrator.' }
+    );
   }
-
-  // Retrieve user permissions from database
-  const permissions = await authModel.getUserPermissions(user.id);
 
   // Generate tokens
   const accessToken = generateAccessToken({
@@ -55,7 +68,8 @@ const loginUser = async ({ mobile, password, ipAddress, userAgent }) => {
 
   const refreshToken = generateRefreshToken();
   const tokenHash = hashToken(refreshToken);
-  const expiresAt = getRefreshTokenExpiry();
+  const expiresDate = getRefreshTokenExpiry();
+  const tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   // Create persistent session
   await authModel.createSession({
@@ -63,22 +77,66 @@ const loginUser = async ({ mobile, password, ipAddress, userAgent }) => {
     tokenHash,
     ipAddress,
     userAgent,
-    expiresAt
+    expiresAt: expiresDate
   });
 
-  // Update last login timestamp
-  await authModel.updateLastLogin(user.id);
+  // Build client response user object matching role contract
+  let userPayload;
+  let successMessage = 'உள்நுழைவு வெற்றிகரமாக முடிந்தது (Sign in successful)';
+
+  if (user.role === 'staff') {
+    successMessage = 'பணியாளர் தளம் உள்நுழைவு வெற்றிகரமாக முடிந்தது';
+    const staff = await authModel.getStaffProfile(user.id, targetMobile);
+
+    if (staff) {
+      userPayload = {
+        id: staff.id,
+        staffId: staff.id,
+        role: 'staff',
+        nameEnglish: staff.name_english,
+        nameTamil: staff.name_tamil,
+        designationTamil: staff.designation_tamil,
+        designationEnglish: staff.designation_english,
+        roleBadge: staff.role_badge,
+        phone: staff.phone || (user.country_code ? `${user.country_code}${user.mobile_number}` : `+91${user.mobile_number}`),
+        traditionTamil: staff.tradition_tamil,
+        certificationTamil: staff.certification_tamil,
+        expertiseTamil: staff.expertise_tamil,
+        languagesTamil: staff.languages_tamil
+      };
+    } else {
+      userPayload = {
+        id: user.id,
+        role: 'staff',
+        nameEnglish: user.name_english,
+        nameTamil: user.name_tamil,
+        title: user.title,
+        phone: user.country_code ? `${user.country_code}${user.mobile_number}` : `+91${user.mobile_number}`,
+        email: user.email,
+        avatarUrl: user.avatar_url
+      };
+    }
+  } else {
+    // Admin user profile
+    userPayload = {
+      id: user.id,
+      role: 'admin',
+      nameEnglish: user.name_english,
+      nameTamil: user.name_tamil,
+      title: user.title || 'முதன்மை நிர்வாகி (Chief Administrator)',
+      phone: user.country_code ? `${user.country_code}${user.mobile_number}` : `+91${user.mobile_number}`,
+      email: user.email || 'mandhragiri.jothidam@gmail.com',
+      avatarUrl: user.avatar_url || null
+    };
+  }
 
   return {
-    accessToken,
-    refreshToken,
-    user: {
-      id: user.id,
-      name: user.name,
-      mobile: user.mobile,
-      role: user.role,
-      mustChangePassword: Boolean(user.must_change_password),
-      permissions
+    message: successMessage,
+    data: {
+      token: accessToken,
+      refreshToken,
+      expiresAt: tokenExpiresAt,
+      user: userPayload
     }
   };
 };
@@ -89,34 +147,31 @@ const loginUser = async ({ mobile, password, ipAddress, userAgent }) => {
  */
 const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
   if (!refreshToken) {
-    throw ApiError.badRequest('Refresh token is required');
+    throw new ApiError(400, 'Refresh token is required', true, { refreshToken: 'Refresh token is required.' });
   }
 
   const tokenHash = hashToken(refreshToken);
   const session = await authModel.findSessionByTokenHash(tokenHash);
 
   if (!session) {
-    throw ApiError.unauthorized('Invalid or expired refresh token');
+    throw new ApiError(401, 'Invalid or expired refresh token', true, { credentials: 'Invalid or expired refresh token' });
   }
 
-  // If token is already revoked, potential token reuse attempt: revoke all sessions for this user
   if (session.is_revoked) {
     await authModel.revokeAllUserSessions(session.user_id);
-    throw ApiError.unauthorized('Session has been revoked due to security breach');
+    throw new ApiError(401, 'Session has been revoked due to security breach', true);
   }
 
-  // Check expiration
   const now = new Date();
   if (new Date(session.expires_at) < now) {
     await authModel.revokeSessionById(session.id);
-    throw ApiError.unauthorized('Refresh token has expired. Please log in again.');
+    throw new ApiError(401, 'Refresh token has expired. Please log in again.', true);
   }
 
-  // Validate user status
   const user = await authModel.findUserById(session.user_id);
-  if (!user || user.status !== 'ACTIVE') {
+  if (!user || user.status !== 'active') {
     await authModel.revokeSessionById(session.id);
-    throw ApiError.unauthorized('User account is inactive or not found');
+    throw new ApiError(401, 'User account is inactive or not found', true);
   }
 
   // Revoke old session (Rotation)
@@ -130,99 +185,115 @@ const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
 
   const newRefreshToken = generateRefreshToken();
   const newTokenHash = hashToken(newRefreshToken);
-  const expiresAt = getRefreshTokenExpiry();
+  const expiresDate = getRefreshTokenExpiry();
+  const tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  // Save new session
   await authModel.createSession({
     userId: user.id,
     tokenHash: newTokenHash,
     ipAddress,
     userAgent,
-    expiresAt
+    expiresAt: expiresDate
   });
 
   return {
-    accessToken: newAccessToken,
+    token: newAccessToken,
     refreshToken: newRefreshToken,
+    expiresAt: tokenExpiresAt,
     user: {
       id: user.id,
-      name: user.name,
-      mobile: user.mobile,
+      nameEnglish: user.name_english,
+      nameTamil: user.name_tamil,
       role: user.role,
-      mustChangePassword: Boolean(user.must_change_password)
+      phone: user.country_code ? `${user.country_code}${user.mobile_number}` : `+91${user.mobile_number}`
     }
   };
 };
 
 /**
- * Log out user by revoking the refresh token session
- * @param {Object} params - { refreshToken, userId }
+ * Log out user by revoking refresh token session
  */
 const logoutUser = async ({ refreshToken, userId }) => {
   if (refreshToken) {
     const tokenHash = hashToken(refreshToken);
     await authModel.revokeSessionByTokenHash(tokenHash);
   } else if (userId) {
-    // If no refresh token passed but user is authenticated, revoke all active sessions
     await authModel.revokeAllUserSessions(userId);
   }
 };
 
 /**
  * Get profile for authenticated user
- * @param {number|string} userId
+ * @param {string} userId
  */
 const getCurrentUser = async (userId) => {
   const user = await authModel.findUserById(userId);
   if (!user) {
-    throw ApiError.notFound('User not found');
+    throw new ApiError(404, 'User not found', true);
   }
 
-  if (user.status !== 'ACTIVE') {
-    throw ApiError.unauthorized('Account is deactivated');
+  if (user.status !== 'active') {
+    throw new ApiError(403, 'Account is deactivated', true);
   }
 
-  const permissions = await authModel.getUserPermissions(userId);
+  if (user.role === 'staff') {
+    const staff = await authModel.getStaffProfile(user.id);
+    if (staff) {
+      return {
+        id: staff.id,
+        staffId: staff.id,
+        role: 'staff',
+        nameEnglish: staff.name_english,
+        nameTamil: staff.name_tamil,
+        designationTamil: staff.designation_tamil,
+        designationEnglish: staff.designation_english,
+        roleBadge: staff.role_badge,
+        phone: staff.phone,
+        traditionTamil: staff.tradition_tamil,
+        certificationTamil: staff.certification_tamil,
+        expertiseTamil: staff.expertise_tamil,
+        languagesTamil: staff.languages_tamil,
+        status: staff.status
+      };
+    }
+  }
 
   return {
     id: user.id,
-    name: user.name,
-    mobile: user.mobile,
-    email: user.email,
     role: user.role,
-    status: user.status,
-    mustChangePassword: Boolean(user.must_change_password),
-    lastLoginAt: user.last_login_at,
-    permissions
+    nameEnglish: user.name_english,
+    nameTamil: user.name_tamil,
+    title: user.title,
+    phone: user.country_code ? `${user.country_code}${user.mobile_number}` : `+91${user.mobile_number}`,
+    email: user.email,
+    avatarUrl: user.avatar_url,
+    addressTamil: user.address_tamil,
+    status: user.status
   };
 };
 
 /**
  * Change user password
- * @param {Object} params - { userId, currentPassword, newPassword }
  */
 const changePassword = async ({ userId, currentPassword, newPassword }) => {
   const user = await authModel.findUserById(userId);
   if (!user) {
-    throw ApiError.notFound('User not found');
+    throw new ApiError(404, 'User not found', true);
   }
 
   const isCurrentPasswordCorrect = await bcrypt.compare(currentPassword, user.password_hash);
   if (!isCurrentPasswordCorrect) {
-    throw ApiError.badRequest('Current password is incorrect');
+    throw new ApiError(400, 'Current password is incorrect', true, { currentPassword: 'Current password is incorrect.' });
   }
 
   if (currentPassword === newPassword) {
-    throw ApiError.badRequest('New password cannot be identical to current password');
+    throw new ApiError(400, 'New password cannot be identical to current password', true);
   }
 
-  const saltRounds = 12;
+  const saltRounds = 10;
   const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
 
-  // Update password in database and clear must_change_password flag
   await authModel.updatePassword(userId, newPasswordHash);
-
-  // Revoke all existing sessions so old tokens cannot be used
   await authModel.revokeAllUserSessions(userId);
 
   return true;

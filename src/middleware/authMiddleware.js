@@ -32,21 +32,18 @@ const authenticate = async (req, res, next) => {
 
     // Verify user still exists and remains active in database
     const user = await authModel.findUserById(decoded.userId);
-    if (!user || user.status !== 'ACTIVE') {
+    if (!user || (user.status && user.status.toLowerCase() !== 'active')) {
       throw ApiError.unauthorized('User account is invalid or inactive');
     }
 
-    // Attach role and permissions from database
-    const permissions = await authModel.getUserPermissions(user.id);
-
     req.user = {
       id: user.id,
-      name: user.name,
-      mobile: user.mobile,
-      email: user.email,
       role: user.role,
-      mustChangePassword: Boolean(user.must_change_password),
-      permissions
+      nameEnglish: user.name_english,
+      nameTamil: user.name_tamil,
+      phone: user.country_code ? `${user.country_code}${user.mobile_number}` : user.mobile_number,
+      email: user.email,
+      avatarUrl: user.avatar_url
     };
 
     return next();
@@ -57,7 +54,7 @@ const authenticate = async (req, res, next) => {
 
 /**
  * Role-based access control (RBAC) middleware
- * @param {...string} allowedRoles - List of allowed roles (e.g. 'SUPER_ADMIN', 'ADMIN')
+ * @param {...string} allowedRoles - List of allowed roles (e.g. 'admin', 'staff')
  */
 const authorizeRoles = (...allowedRoles) => {
   return (req, res, next) => {
@@ -65,30 +62,9 @@ const authorizeRoles = (...allowedRoles) => {
       return next(ApiError.unauthorized('Authentication required'));
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
+    const normalizedAllowed = allowedRoles.map((r) => r.toLowerCase());
+    if (!normalizedAllowed.includes(req.user.role.toLowerCase())) {
       return next(ApiError.forbidden('You do not have permission to access this resource'));
-    }
-
-    return next();
-  };
-};
-
-/**
- * Permission-based access control middleware
- * @param {...string} requiredPermissions - Permissions required to access endpoint
- */
-const requirePermission = (...requiredPermissions) => {
-  return (req, res, next) => {
-    if (!req.user || !Array.isArray(req.user.permissions)) {
-      return next(ApiError.unauthorized('Authentication required'));
-    }
-
-    const hasPermission = requiredPermissions.every((perm) =>
-      req.user.permissions.includes(perm)
-    );
-
-    if (!hasPermission) {
-      return next(ApiError.forbidden('Forbidden: Insufficient privileges'));
     }
 
     return next();
@@ -100,14 +76,15 @@ const requirePermission = (...requiredPermissions) => {
  */
 const loginRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 login requests per windowMs
+  max: 20, // Limit each IP to 20 login requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
     return sendError(
       res,
       'Too many login attempts from this IP address. Please try again after 15 minutes.',
-      429
+      429,
+      { rateLimit: 'Too many login attempts. Please try again later.' }
     );
   }
 });
@@ -115,6 +92,5 @@ const loginRateLimiter = rateLimit({
 module.exports = {
   authenticate,
   authorizeRoles,
-  requirePermission,
   loginRateLimiter
 };
