@@ -1,0 +1,22 @@
+$kind: http-request
+url: "{{baseUrl}}/staff/me/leaves"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{staffToken}}
+body:
+  type: text
+  content: |-
+    {
+      "startDate": "{{leaveStart}}",
+      "endDate": "{{leaveEnd}}",
+      "leaveType": "personal",
+      "reason": "Postman test leave request"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Leave request is created', function () { pm.response.to.have.status(201); });
+      pm.collectionVariables.set('leaveId', pm.response.json().data.id);
+    language: text/javascript
+order: 18000

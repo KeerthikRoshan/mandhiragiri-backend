@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mandhiragiri Jothidam API - Postman Testing Guide</title>
+  <style>
+    @page { size: A4; margin: 18mm 17mm; }
+    * { box-sizing: border-box; }
+    body { color: #202b35; font: 11pt/1.55 Arial, "Nirmala UI", sans-serif; max-width: 780px; margin: 0 auto; }
+    h1 { color: #173d4d; font-size: 24pt; line-height: 1.15; margin: 0 0 6px; }
+    h2 { color: #176b69; font-size: 15pt; margin: 24px 0 8px; border-bottom: 1px solid #d5e2e2; padding-bottom: 4px; }
+    p, li { margin-top: 5px; }
+    ol, ul { padding-left: 22px; }
+    code { font: 9.5pt Consolas, monospace; color: #114f51; background: #eef4f3; padding: 1px 3px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #f3f7f6; background: #18343e; padding: 12px 14px; border-radius: 4px; font: 9pt/1.45 Consolas, monospace; }
+    pre code { color: inherit; background: transparent; padding: 0; }
+    .lead { color: #52646b; font-size: 12pt; margin: 0 0 20px; }
+    .note { border-left: 3px solid #d49743; padding: 6px 12px; background: #fbf7ef; }
+    .endpoint-list li { margin-bottom: 5px; }
+    .footer { margin-top: 28px; color: #65757b; border-top: 1px solid #d5e2e2; padding-top: 8px; font-size: 9pt; }
+    @media print { h2 { break-after: avoid; } pre, li { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <h1>Mandhiragiri Jothidam</h1>
+  <p class="lead">Postman API Testing Guide</p>
+
+  <h2>Start the Backend</h2>
+  <ol>
+    <li>Start MySQL in the XAMPP Control Panel.</li>
+    <li>Open PowerShell in the backend project folder. If <code>.env</code> does not exist, create it from the example:</li>
+  </ol>
+  <pre><code>Copy-Item .env.example .env</code></pre>
+  <ol start="3">
+    <li>Install dependencies, apply database migrations, seed the Super Admin, and start the API:</li>
+  </ol>
+  <pre><code>npm.cmd install
+npm.cmd run migrate
+npm.cmd run seed:admin
+npm.cmd run dev</code></pre>
+  <ol start="4">
+    <li>Check <code>http://localhost:5000/api/v1/health</code>. Expect HTTP 200 and <code>database: CONNECTED</code>.</li>
+  </ol>
+
+  <h2>Import and Run the Collection</h2>
+  <ol>
+    <li>In Postman, choose <strong>Import</strong> and select <code>postman/collections/Mandhiragiri API.postman_collection.json</code>.</li>
+    <li>The collection variable <code>baseUrl</code> defaults to <code>http://localhost:5000/api/v1</code>.</li>
+    <li>Check <code>adminPhone</code> and <code>adminPassword</code> collection variables against <code>.env</code>. The example defaults are <code>9876543210</code> and <code>Admin@1234</code>.</li>
+    <li>Set unique values for <code>staffPhone</code> and <code>staffEmail</code> before each fresh run. The database rejects duplicates.</li>
+    <li>Select the collection, click <strong>Run</strong>, and run requests in the listed order. Scripts save tokens, IDs, and the generated staff password for later requests.</li>
+  </ol>
+  <p class="note"><strong>Password note:</strong> The final password-change request changes the seeded admin password to <code>PostmanTest@1234</code>. Use that value for a later run. If Postman does not persist the updated collection variable, update <code>adminPassword</code> manually.</p>
+  <p class="note"><strong>Panchangam note:</strong> The collection writes clearly marked test values for today's date and Madurai. Replace these with verified astrological data for real use.</p>
+
+  <h2>Endpoints Covered</h2>
+  <ul class="endpoint-list">
+    <li>Health: <code>GET /health</code>, <code>GET /api/v1/health</code></li>
+    <li>Auth: <code>POST /api/v1/auth/login</code>, <code>POST /api/v1/auth/staff-login</code>, <code>POST /api/v1/auth/refresh</code>, <code>POST /api/v1/auth/logout</code>, <code>GET /api/v1/auth/me</code>, <code>POST /api/v1/auth/change-password</code></li>
+    <li>Dashboard and Panchangam: <code>GET /api/v1/dashboard/overview</code>, <code>GET /api/v1/panchangam/today</code>, <code>PUT /api/v1/admin/panchangam</code></li>
+    <li>Bookings and balances: <code>GET /api/v1/schedule/bookings</code>, <code>POST /api/v1/bookings</code>, <code>GET /api/v1/bookings/:bookingId/balance</code>, <code>POST /api/v1/bookings/:bookingId/payments</code>, <code>GET /api/v1/bookings/:bookingId/payments</code>, <code>GET /api/v1/reports/balances</code></li>
+    <li>Staff: <code>GET /api/v1/staff</code>, <code>POST /api/v1/staff</code>, <code>GET /api/v1/staff/me/dashboard</code>, <code>POST /api/v1/staff/me/leaves</code></li>
+    <li>Attendance: <code>GET /api/v1/attendance/daily</code>, <code>PUT /api/v1/attendance/record</code>, <code>POST /api/v1/attendance/self</code></li>
+    <li>Leave: <code>GET /api/v1/leaves/admin/all</code>, <code>POST /api/v1/leaves/admin/:leaveId/decision</code></li>
+    <li>Events and profile: <code>POST /api/v1/events/:eventId/complete</code>, <code>GET /api/v1/admin/profile</code>, <code>PUT /api/v1/admin/profile</code></li>
+  </ul>
+
+  <h2>Check Database Rows</h2>
+  <p>Run these queries in phpMyAdmin or a MySQL client:</p>
+  <pre><code>USE mandhiragiri_db;
+SHOW TABLES;
+
+SELECT id, booking_number, total_event_charge, client_total_received,
+       priest_total_pay, priest_advance_paid
+FROM bookings
+ORDER BY id DESC
+LIMIT 10;
+
+SELECT booking_id, party, amount, payment_method, reference, paid_at
+FROM booking_transactions
+ORDER BY id DESC
+LIMIT 20;</code></pre>
+
+  <p class="footer">Local testing document for the Mandhiragiri Jothidam backend.</p>
+</body>
+</html>

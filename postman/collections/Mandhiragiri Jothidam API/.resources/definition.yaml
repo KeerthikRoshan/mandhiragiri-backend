@@ -1,0 +1,32 @@
+$kind: collection
+description: End-to-end API flow for health, authentication, booking balances, staff, attendance, leave, Panchangam, dashboard, and admin profile.
+variables:
+  baseUrl: http://localhost:5000/api/v1
+  adminPhone: "9876543210"
+  adminPassword: Admin@1234
+  staffPhone: "+919876500001"
+  staffEmail: priest.test@example.com
+  staffName: Test Priest
+  adminToken: ""
+  adminRefreshToken: ""
+  staffToken: ""
+  staffId: ""
+  staffPassword: ""
+  bookingId: ""
+  leaveId: ""
+  today: ""
+  leaveStart: ""
+  leaveEnd: ""
+scripts:
+  - type: http:beforeRequest
+    code: |-
+      function dateString(date) {
+        return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+      }
+      const today = new Date();
+      pm.collectionVariables.set('today', dateString(today));
+      const leaveStart = new Date(today); leaveStart.setDate(leaveStart.getDate() + 7);
+      const leaveEnd = new Date(leaveStart); leaveEnd.setDate(leaveEnd.getDate() + 2);
+      pm.collectionVariables.set('leaveStart', dateString(leaveStart));
+      pm.collectionVariables.set('leaveEnd', dateString(leaveEnd));
+    language: text/javascript

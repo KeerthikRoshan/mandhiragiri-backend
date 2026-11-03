@@ -1,0 +1,19 @@
+$kind: http-request
+url: "{{baseUrl}}/auth/staff-login"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "mobileNumber": "{{staffPhone}}",
+      "password": "{{staffPassword}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Staff login succeeds', function () { pm.response.to.have.status(200); });
+      pm.collectionVariables.set('staffToken', pm.response.json().data.token);
+    language: text/javascript
+order: 6000

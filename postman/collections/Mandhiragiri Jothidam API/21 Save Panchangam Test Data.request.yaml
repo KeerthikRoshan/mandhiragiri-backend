@@ -1,0 +1,30 @@
+$kind: http-request
+url: "{{baseUrl}}/admin/panchangam"
+method: PUT
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "dateKey": "{{today}}",
+      "location": "Madurai",
+      "gregorianBadge": "Postman test date",
+      "tamilDateBadge": "சோதனை நாள்",
+      "tithiTitleTamil": "சோதனை திதி",
+      "tithiTitleEnglish": "Test Tithi",
+      "tithiEndTime": "02:00 PM",
+      "nakshatraTitleTamil": "சோதனை நட்சத்திரம்",
+      "nakshatraTitleEnglish": "Test Nakshatra",
+      "nakshatraEndTime": "04:00 PM",
+      "nallaNeramMorning": "09:00 AM - 10:00 AM",
+      "nallaNeramEvening": "04:00 PM - 05:00 PM",
+      "rahuKalamTime": "07:30 AM - 09:00 AM",
+      "rahuKalamPeriod": "காலை"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Panchangam test data is saved', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 24000

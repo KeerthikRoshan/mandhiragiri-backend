@@ -9,6 +9,8 @@ const {
 
 // Dummy hash for constant-time comparison against nonexistent users
 const DUMMY_HASH = '$2b$12$e8Y6/m5L4wO7q3NlWpA1q.1xYk2YyJ9kGqE9x0sWk9N9N9N9N9N9e';
+const isActive = (status) => String(status).toLowerCase() === 'active';
+const isStaffRole = (role) => ['PRIEST', 'ASSISTANT'].includes(String(role).toUpperCase());
 
 /**
  * Calculate refresh token expiry date
@@ -51,7 +53,7 @@ const loginUser = async ({ mobileNumber, password, role, ipAddress, userAgent })
   }
 
   // Check account status
-  if (user.status !== 'active') {
+  if (!isActive(user.status)) {
     throw new ApiError(
       403,
       'தங்கள் பணியாளர் கணக்கு தற்போது முடக்கப்பட்டுள்ளது.',
@@ -84,14 +86,14 @@ const loginUser = async ({ mobileNumber, password, role, ipAddress, userAgent })
   let userPayload;
   let successMessage = 'உள்நுழைவு வெற்றிகரமாக முடிந்தது (Sign in successful)';
 
-  if (user.role === 'staff') {
+  if (isStaffRole(user.role)) {
     successMessage = 'பணியாளர் தளம் உள்நுழைவு வெற்றிகரமாக முடிந்தது';
     const staff = await authModel.getStaffProfile(user.id, targetMobile);
 
     if (staff) {
       userPayload = {
-        id: staff.id,
-        staffId: staff.id,
+        id: String(staff.id),
+        staffId: String(staff.id),
         role: 'staff',
         nameEnglish: staff.name_english,
         nameTamil: staff.name_tamil,
@@ -169,7 +171,7 @@ const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
   }
 
   const user = await authModel.findUserById(session.user_id);
-  if (!user || user.status !== 'active') {
+  if (!user || !isActive(user.status)) {
     await authModel.revokeSessionById(session.id);
     throw new ApiError(401, 'User account is inactive or not found', true);
   }
@@ -232,16 +234,16 @@ const getCurrentUser = async (userId) => {
     throw new ApiError(404, 'User not found', true);
   }
 
-  if (user.status !== 'active') {
+  if (!isActive(user.status)) {
     throw new ApiError(403, 'Account is deactivated', true);
   }
 
-  if (user.role === 'staff') {
+  if (isStaffRole(user.role)) {
     const staff = await authModel.getStaffProfile(user.id);
     if (staff) {
       return {
-        id: staff.id,
-        staffId: staff.id,
+        id: String(staff.id),
+        staffId: String(staff.id),
         role: 'staff',
         nameEnglish: staff.name_english,
         nameTamil: staff.name_tamil,

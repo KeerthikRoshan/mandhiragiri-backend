@@ -1,0 +1,532 @@
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const projectModel = require('../models/projectModel');
+const ApiError = require('../utils/ApiError');
+
+const amount = (value) => Number(Number(value || 0).toFixed(2));
+const dateKeyToday = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const displayTime = (value) => {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return String(value);
+  const hour = Number(match[1]);
+  return `${String(hour % 12 || 12).padStart(2, '0')}:${match[2]} ${hour >= 12 ? 'PM' : 'AM'}`;
+};
+
+const dateIso = (value) => value instanceof Date ? value.toISOString() : value;
+
+const getDashboardOverview = async (userId) => {
+  const row = await projectModel.getDashboardOverview(userId);
+  return {
+    dateKey: row.date_key,
+    todayEventsCount: Number(row.today_events_count || 0),
+    upcomingSevenDaysCount: Number(row.upcoming_seven_days_count || 0),
+    pendingApprovalCount: Number(row.pending_approval_count || 0),
+    completedTotalCount: Number(row.completed_total_count || 0),
+    unreadNotificationsCount: Number(row.unread_notifications_count || 0)
+  };
+};
+
+const getPanchangam = async ({ date, location }) => {
+  const row = await projectModel.getPanchangam(date, location);
+  if (!row) throw ApiError.notFound('Panchangam data is not configured for this date and location.');
+  return {
+    dateKey: row.date_key,
+    gregorianBadge: row.gregorian_badge,
+    tamilDateBadge: row.tamil_date_badge,
+    location: row.location,
+    tithi: {
+      titleTamil: row.tithi_title_tamil,
+      titleEnglish: row.tithi_title_english,
+      endTime: row.tithi_end_time
+    },
+    nakshatra: {
+      titleTamil: row.nakshatra_title_tamil,
+      titleEnglish: row.nakshatra_title_english,
+      endTime: row.nakshatra_end_time
+    },
+    nallaNeram: {
+      morning: row.nalla_neram_morning,
+      evening: row.nalla_neram_evening,
+      badge: 'சுபம்'
+    },
+    rahuKalam: {
+      time: row.rahu_kalam_time,
+      period: row.rahu_kalam_period,
+      badge: 'விலக்குக'
+    }
+  };
+};
+
+const savePanchangam = async (data, userId) => {
+  const row = await projectModel.upsertPanchangam(data, userId);
+  return getPanchangam({ date: data.dateKey, location: data.location });
+};
+
+const getSchedule = async ({ date, category }) => {
+  const [rows, calendar] = await Promise.all([
+    projectModel.getScheduleBookings(date, category),
+    projectModel.getCalendarSettings(date)
+  ]);
+  const counts = { all: rows.length, jathagam: 0, temple: 0, outdoor: 0 };
+  let confirmed = 0;
+  let pending = 0;
+  let completed = 0;
+  const bookings = rows.map((row) => {
+    counts[row.category] = (counts[row.category] || 0) + 1;
+    if (row.status === 'confirmed') confirmed += 1;
+    if (row.status === 'pending') pending += 1;
+    if (row.status === 'completed') completed += 1;
+    const timeParts = row.time_slot.split(' - ');
+    const clientBalance = amount(row.total_event_charge) - amount(row.client_total_received);
+    const priestBalance = amount(row.priest_total_pay) - amount(row.priest_advance_paid);
+    return {
+      id: String(row.id),
+      date,
+      timeSlot: row.time_slot,
+      startTime: timeParts[0] || row.time_slot,
+      endTime: timeParts[1] || null,
+      titleTamil: row.title,
+      titleEnglish: row.title,
+      category: row.category,
+      categoryLabelTamil: row.category_label_tamil,
+      status: row.status,
+      statusLabelTamil: row.status === 'completed' ? 'முடிவுற்றது' : row.status === 'pending' ? 'நிலுவையில்' : 'உறுதி செய்யப்பட்டது',
+      clientName: row.client_name,
+      clientPhone: row.client_phone,
+      locationTamil: row.location,
+      priestId: row.priest_id,
+      priestNameTamil: row.staff_name_tamil || row.priest_name,
+      priestPhone: row.priest_phone,
+      notesTamil: row.completion_notes,
+      totalEventCharge: amount(row.total_event_charge),
+      clientTotalReceived: amount(row.client_total_received),
+      clientBalanceAmount: clientBalance,
+      priestTotalPay: amount(row.priest_total_pay),
+      priestAdvancePaid: amount(row.priest_advance_paid),
+      priestBalanceAmount: priestBalance
+    };
+  });
+  return {
+    dateKey: date,
+    isMuhurtham: Boolean(calendar.is_muhurtham),
+    isBlocked: Boolean(calendar.is_blocked),
+    summary: {
+      total: bookings.length,
+      confirmed,
+      pending,
+      upcoming: bookings.filter((booking) => booking.status === 'confirmed' || booking.status === 'pending').length,
+      completed
+    },
+    categoryCounts: counts,
+    bookings
+  };
+};
+
+const maskPhone = (phone) => {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits.length >= 5 ? `+${digits.slice(0, 2)} ${digits.slice(2, 5)} XXXXX` : phone;
+};
+
+const listStaff = async ({ status = 'active', search = '' }) => {
+  const rows = await projectModel.listStaff({ status, search });
+  const staff = rows.map((row) => ({
+    id: String(row.id),
+    nameEnglish: row.name_english,
+    nameTamil: row.name_tamil,
+    designationTamil: row.designation_tamil,
+    designationEnglish: row.designation_english,
+    roleBadge: row.role_badge,
+    fullTitleTamil: [row.name_tamil, row.designation_tamil].filter(Boolean).join(' - '),
+    traditionTamil: row.tradition_tamil,
+    certificationTamil: row.certification_tamil,
+    phone: row.phone,
+    phoneDisplay: maskPhone(row.phone),
+    expertiseTamil: row.expertise_tamil,
+    languagesTamil: row.languages_tamil,
+    avatarUrl: row.avatar_url,
+    status: row.status.toLowerCase(),
+    metrics: {
+      totalBookings: Number(row.total_bookings || 0),
+      thisWeekBookings: Number(row.this_week_bookings || 0),
+      conflictsCount: Number(row.conflicts_count || 0)
+    },
+    tabCounts: {
+      past: Number(row.past_count || 0),
+      active: Number(row.active_count || 0),
+      upcoming: Number(row.upcoming_count || 0)
+    }
+  }));
+  return {
+    totalCount: staff.length,
+    activeCount: staff.filter((entry) => entry.status === 'active').length,
+    staff
+  };
+};
+
+const createStaff = async (input) => {
+  const roleCategory = String(input.roleCategory || input.designationEnglish || 'PRIEST').toUpperCase().includes('ASSISTANT')
+    ? 'ASSISTANT'
+    : 'PRIEST';
+  const temporaryPassword = input.password || crypto.randomBytes(9).toString('base64url');
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+  const phone = String(input.phone).replace(/[\s-]/g, '');
+  const created = await projectModel.createStaff({
+    user: { mobile: phone, email: input.email, passwordHash },
+    staff: { ...input, phone, roleCategory }
+  });
+  return {
+    id: String(created.id),
+    nameEnglish: input.nameEnglish,
+    nameTamil: input.nameTamil || null,
+    designationTamil: input.designationTamil || null,
+    designationEnglish: input.designationEnglish || (roleCategory === 'ASSISTANT' ? 'Assistant' : 'Priest'),
+    roleBadge: input.roleBadge || null,
+    phone,
+    phoneDisplay: maskPhone(phone),
+    status: 'active',
+    temporaryPassword,
+    createdAt: new Date().toISOString()
+  };
+};
+
+const getDailyAttendance = async ({ date, status, role, search }) => {
+  const rows = await projectModel.getDailyAttendance(date);
+  const formatted = rows.map((row) => ({
+    id: `${row.staff_id}_${date}`,
+    staffId: String(row.staff_id),
+    staffNameEnglish: row.name_english,
+    staffNameTamil: row.name_tamil,
+    designationTamil: row.designation_tamil,
+    designationEnglish: row.designation_english,
+    roleCategory: row.role_category.toLowerCase(),
+    status: row.status ? row.status.toLowerCase() : 'not_marked',
+    submissionTime: displayTime(row.submission_time),
+    remarks: row.remarks,
+    updatedAt: row.updated_at ? dateIso(row.updated_at) : null,
+    updatedBy: row.updated_by || (row.status ? 'Self (Staff Portal)' : null)
+  }));
+  const summary = {
+    totalStaff: formatted.length,
+    presentCount: formatted.filter((row) => row.status === 'present').length,
+    absentCount: formatted.filter((row) => row.status === 'absent').length,
+    notMarkedCount: formatted.filter((row) => row.status === 'not_marked').length
+  };
+  const records = formatted.filter((row) =>
+    (!status || status === 'all' || row.status === status) &&
+    (!role || role === 'all' || row.roleCategory === role) &&
+    (!search || `${row.staffNameEnglish} ${row.staffNameTamil || ''} ${row.designationTamil || ''}`.toLowerCase().includes(search.toLowerCase()))
+  );
+  return { dateKey: date, summary, records };
+};
+
+const parseTime = (value) => {
+  if (!value) return null;
+  const match = String(value).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) throw ApiError.badRequest('Submission time must be in HH:mm or hh:mm AM/PM format.');
+  let hour = Number(match[1]);
+  const suffix = (match[3] || '').toUpperCase();
+  if (suffix === 'PM' && hour < 12) hour += 12;
+  if (suffix === 'AM' && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, '0')}:${match[2]}:00`;
+};
+
+const updateAttendance = async (input, updatedBy) => {
+  const row = await projectModel.upsertAttendance({
+    ...input,
+    status: input.status.toUpperCase(),
+    submissionTime: parseTime(input.submissionTime),
+    updatedBy
+  });
+  return {
+    recordId: `${input.staffId}_${input.dateKey}`,
+    staffId: String(input.staffId),
+    dateKey: input.dateKey,
+    status: row.status.toLowerCase(),
+    submissionTime: displayTime(row.submission_time),
+    remarks: row.remarks,
+    updatedAt: dateIso(row.updated_at),
+    updatedBy: String(updatedBy)
+  };
+};
+
+const submitAttendance = async (input, userId) => {
+  const staff = await projectModel.getStaffByUserId(userId);
+  if (!staff) throw ApiError.forbidden('Only a registered staff member can submit attendance.');
+  if (input.dateKey !== dateKeyToday()) throw ApiError.badRequest('Attendance can only be submitted for today.');
+  const now = new Date();
+  const submissionTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
+  try {
+    const id = await projectModel.submitAttendance({
+      staffId: staff.id,
+      dateKey: input.dateKey,
+      status: input.status,
+      submissionTime,
+      remarks: input.remarks
+    });
+    return {
+      id: `${staff.id}_${input.dateKey}`,
+      staffId: String(staff.id),
+      dateKey: input.dateKey,
+      status: input.status,
+      submissionTime: displayTime(submissionTime),
+      isSealed: true,
+      recordId: String(id)
+    };
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      throw new ApiError(409, 'இன்றைய வருகைப் பதிவு ஏற்கனவே முடிந்துள்ளது. மீண்டும் பதிவு செய்ய இயலாது.', true, {
+        attendance: 'Attendance has already been recorded for today (Strict Once-Per-Day Rule).'
+      });
+    }
+    throw error;
+  }
+};
+
+const formatLeave = (row) => {
+  const start = new Date(`${row.start_date}T00:00:00Z`);
+  const end = new Date(`${row.end_date}T00:00:00Z`);
+  return {
+    id: String(row.id),
+    staffId: String(row.staff_id),
+    staffNameEnglish: row.name_english,
+    staffNameTamil: row.name_tamil,
+    designationTamil: row.designation_tamil,
+    startDate: String(row.start_date).slice(0, 10),
+    endDate: String(row.end_date).slice(0, 10),
+    totalDays: Math.floor((end - start) / 86400000) + 1,
+    leaveType: row.leave_type,
+    leaveTypeLabelTamil: row.leave_type,
+    reason: row.reason,
+    status: row.status.toLowerCase(),
+    appliedAt: String(row.created_at).slice(0, 10),
+    adminRemarks: row.admin_remarks
+  };
+};
+
+const getLeaveRequests = async (status = 'all') => {
+  const data = await projectModel.listLeaveRequests(status);
+  return {
+    counts: {
+      all: Number(data.counts.all_count || 0),
+      pending: Number(data.counts.pending_count || 0),
+      approved: Number(data.counts.approved_count || 0),
+      rejected: Number(data.counts.rejected_count || 0)
+    },
+    leaves: data.leaves.map(formatLeave)
+  };
+};
+
+const applyLeave = async (input, userId) => {
+  const staff = await projectModel.getStaffByUserId(userId);
+  if (!staff) throw ApiError.forbidden('Only a registered staff member can apply for leave.');
+  const result = await projectModel.createLeaveRequest({ ...input, staffId: staff.id });
+  if (result.conflict) {
+    throw new ApiError(409, 'குறிப்பிட்ட தேதிகளில் ஏற்கனவே மற்றொரு விடுப்பு விண்ணப்பம் பதிவில் உள்ளது.', true, {
+      dateRange: 'You already have an active leave request covering these dates.'
+    });
+  }
+  const totalDays = Math.floor((new Date(`${input.endDate}T00:00:00Z`) - new Date(`${input.startDate}T00:00:00Z`)) / 86400000) + 1;
+  return {
+    id: String(result.id),
+    staffId: String(staff.id),
+    startDate: input.startDate,
+    endDate: input.endDate,
+    totalDays,
+    leaveType: input.leaveType,
+    reason: input.reason,
+    status: 'pending',
+    appliedAt: dateKeyToday()
+  };
+};
+
+const decideLeave = async ({ leaveId, decision, adminRemarks }, user) => {
+  const row = await projectModel.decideLeaveRequest({
+    leaveId,
+    decision,
+    remarks: adminRemarks,
+    decidedBy: user.id
+  });
+  if (!row) throw new ApiError(409, 'Leave request is not pending.');
+  return {
+    leaveId: String(row.id),
+    status: row.status.toLowerCase(),
+    decidedAt: dateIso(row.decided_at),
+    decidedBy: user.nameTamil || user.nameEnglish || String(user.id),
+    adminRemarks: row.admin_remarks
+  };
+};
+
+const getStaffDashboard = async (userId) => {
+  const staff = await projectModel.getStaffByUserId(userId);
+  if (!staff) throw ApiError.forbidden('Staff profile is not configured.');
+  const data = await projectModel.getStaffDashboard(staff.id, dateKeyToday());
+  return {
+    profile: {
+      id: String(staff.id),
+      nameTamil: staff.name_tamil || staff.name_english,
+      designationTamil: staff.designation_tamil,
+      traditionTamil: staff.tradition_tamil
+    },
+    todayAttendance: {
+      isMarked: Boolean(data.attendance),
+      status: data.attendance ? data.attendance.status.toLowerCase() : null,
+      submissionTime: data.attendance ? displayTime(data.attendance.submission_time) : null,
+      isSealed: Boolean(data.attendance && data.attendance.is_sealed)
+    },
+    counts: {
+      todayCount: Number(data.counts.today_count || 0),
+      upcomingCount: Number(data.counts.upcoming_count || 0),
+      pendingCompletionCount: Number(data.counts.pending_completion_count || 0)
+    },
+    todayEvents: data.events.map((row) => ({
+      id: String(row.id),
+      date: String(row.date_key).slice(0, 10),
+      timeSlot: row.time_slot,
+      titleTamil: row.title,
+      category: row.category,
+      categoryLabelTamil: row.category_label_tamil,
+      clientName: row.client_name,
+      clientPhone: row.client_phone,
+      locationTamil: row.location,
+      status: row.status
+    })),
+    todayReminders: data.reminders.map((row) => ({
+      id: String(row.id),
+      titleTamil: row.title_tamil,
+      descriptionTamil: row.description_tamil,
+      time: row.reminder_time,
+      status: row.status.toLowerCase()
+    }))
+  };
+};
+
+const completeEvent = async ({ eventId, completionNotes }, userId) => {
+  const staff = await projectModel.getStaffByUserId(userId);
+  if (!staff) throw ApiError.forbidden('Only registered staff can complete an event.');
+  const row = await projectModel.completeEvent({ eventId, staffId: staff.id, notes: completionNotes });
+  if (!row) throw ApiError.notFound('Assigned event was not found or is already completed.');
+  return {
+    eventId: String(row.id),
+    status: row.status,
+    statusLabelTamil: 'முடிவுற்றது',
+    completedAt: dateIso(row.completed_at),
+    completedBy: String(staff.id),
+    completionNotes: row.completion_notes
+  };
+};
+
+const getAdminProfile = async (userId) => {
+  const row = await projectModel.getAdminProfile(userId);
+  if (!row) throw ApiError.notFound('Administrator profile not found.');
+  return {
+    id: String(row.id),
+    nameTamil: row.name_tamil || row.name_english,
+    titleTamil: row.title_tamil,
+    phone: row.mobile,
+    email: row.email,
+    addressTamil: row.address_tamil,
+    metrics: {
+      yearsExperience: row.years_experience,
+      horoscopeCount: row.horoscope_count,
+      homamCount: row.homam_count,
+      accuracyRate: row.accuracy_rate
+    },
+    ashramDetails: {
+      peedamNameTamil: row.peedam_name_tamil,
+      morningHours: row.morning_hours,
+      eveningHours: row.evening_hours
+    }
+  };
+};
+
+const updateAdminProfile = async (input, userId) => {
+  const row = await projectModel.updateAdminProfile({ ...input, userId });
+  return {
+    phone: row.mobile,
+    email: row.email,
+    addressTamil: row.address_tamil,
+    updatedAt: dateIso(row.updated_at)
+  };
+};
+
+const recordBookingPayment = async (input, userId) => {
+  const result = await projectModel.recordBookingPayment({
+    ...input,
+    party: input.party.toUpperCase(),
+    createdBy: userId
+  });
+  if (result.notFound) throw ApiError.notFound('Booking not found.');
+  if (result.exceedsBalance) {
+    throw ApiError.unprocessable('Payment exceeds the outstanding balance.', {
+      amount: `Remaining balance is ${result.balance}.`
+    });
+  }
+  return {
+    transactionId: String(result.transactionId),
+    bookingId: String(input.bookingId),
+    party: input.party.toLowerCase(),
+    amount: amount(input.amount),
+    paymentMethod: input.paymentMethod || 'cash',
+    recordedAt: new Date().toISOString()
+  };
+};
+
+const getBookingPayments = async (bookingId) => {
+  const rows = await projectModel.listBookingPayments(bookingId);
+  return rows.map((row) => ({
+    id: String(row.id),
+    party: row.party.toLowerCase(),
+    amount: amount(row.amount),
+    paymentMethod: row.payment_method,
+    reference: row.reference,
+    notes: row.notes,
+    paidAt: dateIso(row.paid_at),
+    createdBy: row.created_by ? String(row.created_by) : null
+  }));
+};
+
+const getBalanceReport = async ({ fromDate, toDate }) => {
+  const row = await projectModel.getBalanceReport({ fromDate, toDate });
+  return {
+    fromDate,
+    toDate,
+    bookingCount: Number(row.booking_count || 0),
+    totalEventCharge: amount(row.total_event_charge),
+    clientTotalReceived: amount(row.client_total_received),
+    clientBalanceAmount: amount(row.client_balance_amount),
+    priestTotalPay: amount(row.priest_total_pay),
+    priestAdvancePaid: amount(row.priest_advance_paid),
+    priestBalanceAmount: amount(row.priest_balance_amount)
+  };
+};
+
+module.exports = {
+  dateKeyToday,
+  getDashboardOverview,
+  getPanchangam,
+  savePanchangam,
+  getSchedule,
+  listStaff,
+  createStaff,
+  getDailyAttendance,
+  updateAttendance,
+  submitAttendance,
+  getLeaveRequests,
+  applyLeave,
+  decideLeave,
+  getStaffDashboard,
+  completeEvent,
+  getAdminProfile,
+  updateAdminProfile,
+  recordBookingPayment,
+  getBookingPayments,
+  getBalanceReport
+};

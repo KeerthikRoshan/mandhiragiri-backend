@@ -1,0 +1,21 @@
+$kind: http-request
+url: "{{baseUrl}}/bookings/{{bookingId}}/payments"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "party": "client",
+      "amount": 1000,
+      "paymentMethod": "upi",
+      "reference": "POSTMAN-CLIENT-001",
+      "notes": "Test collection payment"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Payment is recorded', function () { pm.response.to.have.status(201); });
+    language: text/javascript
+order: 10000

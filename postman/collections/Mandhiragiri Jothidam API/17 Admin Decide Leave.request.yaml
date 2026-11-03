@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{baseUrl}}/leaves/admin/{{leaveId}}/decision"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "decision": "approved",
+      "adminRemarks": "Approved by Postman test"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Leave decision is saved', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 20000

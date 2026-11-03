@@ -1,0 +1,19 @@
+$kind: http-request
+url: "{{baseUrl}}/attendance/self"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{staffToken}}
+body:
+  type: text
+  content: |-
+    {
+      "dateKey": "{{today}}",
+      "status": "present",
+      "remarks": null
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Staff attendance is recorded', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 16000

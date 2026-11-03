@@ -1,0 +1,17 @@
+$kind: http-request
+url: "{{baseUrl}}/events/{{bookingId}}/complete"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{staffToken}}
+body:
+  type: text
+  content: |-
+    {
+      "completionNotes": "Completed in Postman test"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Assigned event is completed', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 22000

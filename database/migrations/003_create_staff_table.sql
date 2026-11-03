@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `staff` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` BIGINT NOT NULL UNIQUE,
+  `name_english` VARCHAR(150) NOT NULL,
+  `name_tamil` VARCHAR(150) NULL,
+  `designation_tamil` VARCHAR(100) NULL,
+  `designation_english` VARCHAR(100) NULL,
+  `role_badge` VARCHAR(50) NULL,
+  `role_category` ENUM('PRIEST', 'ASSISTANT') NOT NULL,
+  `phone` VARCHAR(30) NOT NULL UNIQUE,
+  `tradition_tamil` VARCHAR(255) NULL,
+  `certification_tamil` VARCHAR(255) NULL,
+  `expertise_tamil` VARCHAR(255) NULL,
+  `languages_tamil` VARCHAR(150) NULL,
+  `avatar_url` VARCHAR(500) NULL,
+  `status` ENUM('ACTIVE', 'INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_staff_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  INDEX `idx_staff_role_status` (`role_category`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

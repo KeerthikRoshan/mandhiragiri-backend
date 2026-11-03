@@ -1,0 +1,30 @@
+$kind: http-request
+url: "{{baseUrl}}/staff"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "nameEnglish": "{{staffName}}",
+      "nameTamil": "சோதனை புரோகிதர்",
+      "designationTamil": "புரோகிதர்",
+      "designationEnglish": "Priest",
+      "roleCategory": "PRIEST",
+      "roleBadge": "TEST PRIEST",
+      "phone": "{{staffPhone}}",
+      "email": "{{staffEmail}}",
+      "expertiseTamil": "ஹோமம்",
+      "traditionTamil": "வேத சைவ ஆகமம்",
+      "certificationTamil": "சோதனை",
+      "languagesTamil": "தமிழ்"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Staff is created', function () { pm.response.to.have.status(201); });
+      const data = pm.response.json().data; pm.collectionVariables.set('staffId', data.id); pm.collectionVariables.set('staffPassword', data.temporaryPassword);
+    language: text/javascript
+order: 5000

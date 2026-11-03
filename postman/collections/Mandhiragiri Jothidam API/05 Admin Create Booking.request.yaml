@@ -1,0 +1,34 @@
+$kind: http-request
+url: "{{baseUrl}}/bookings"
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "dateKey": "{{today}}",
+      "title": "Test Homam",
+      "clientName": "Postman Customer",
+      "phone": "+919840122334",
+      "location": "Madurai Temple",
+      "category": "temple",
+      "categoryLabelTamil": "கோவில்",
+      "timeSlot": "09:00 AM - 10:30 AM",
+      "priestId": "{{staffId}}",
+      "priestName": "{{staffName}}",
+      "priestPhone": "{{staffPhone}}",
+      "totalEventCharge": 5000,
+      "clientAdvanceAmount": 1000,
+      "clientTotalReceived": 1000,
+      "priestTotalPay": 2500,
+      "priestAdvancePaid": 500
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Booking is created', function () { pm.response.to.have.status(201); });
+      pm.collectionVariables.set('bookingId', pm.response.json().data.id);
+    language: text/javascript
+order: 8000

@@ -1,0 +1,19 @@
+$kind: http-request
+url: "{{baseUrl}}/admin/profile"
+method: PUT
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "phone": "{{adminPhone}}",
+      "email": "admin@mandhiragiri.com",
+      "addressTamil": "Postman test address"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Admin profile update succeeds', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 27000

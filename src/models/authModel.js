@@ -9,76 +9,37 @@ const { pool } = require('../config/database');
 const findUserByMobileAndRole = async (mobileNumber, role = null) => {
   const cleanMobile = String(mobileNumber).replace(/\D/g, '').slice(-10);
   const pattern = `%${cleanMobile}`;
-
-  // If role is explicitly 'staff', search both users and linked staff records
-  if (role && role.toLowerCase() === 'staff') {
-    const staffQuery = `
-      SELECT 
-        u.id,
-        u.role,
-        u.country_code,
-        u.mobile_number,
-        u.password_hash,
-        u.name_english,
-        u.name_tamil,
-        u.title,
-        u.email,
-        u.avatar_url,
-        u.status
-      FROM staff s
-      INNER JOIN users u ON s.user_id = u.id
-      WHERE s.phone LIKE ? AND u.role = 'staff'
-      LIMIT 1;
-    `;
-    const [staffRows] = await pool.execute(staffQuery, [pattern]);
-    if (staffRows.length > 0) {
-      return staffRows[0];
-    }
-  }
-
-  // General search in users table
-  if (role) {
-    const query = `
-      SELECT 
-        id,
-        role,
-        country_code,
-        mobile_number,
-        password_hash,
-        name_english,
-        name_tamil,
-        title,
-        email,
-        avatar_url,
-        status
-      FROM users
-      WHERE mobile_number LIKE ? AND role = ?
-      LIMIT 1;
-    `;
-    const [rows] = await pool.execute(query, [pattern, role.toLowerCase()]);
-    if (rows.length > 0) return rows[0];
-  }
-
-  // Default fallback search by mobile
+  const normalizedRole = role ? role.toUpperCase() : null;
+  const allowedRoles = normalizedRole === 'STAFF'
+    ? ['PRIEST', 'ASSISTANT']
+    : normalizedRole === 'ADMIN'
+      ? ['SUPER_ADMIN', 'ADMIN']
+      : normalizedRole
+        ? [normalizedRole]
+        : [];
+  const roleFilter = allowedRoles.length
+    ? `AND r.name IN (${allowedRoles.map(() => '?').join(', ')})`
+    : '';
   const fallbackQuery = `
     SELECT 
-      id,
-      role,
-      country_code,
-      mobile_number,
-      password_hash,
-      name_english,
-      name_tamil,
-      title,
-      email,
-      avatar_url,
-      status
-    FROM users
-    WHERE mobile_number LIKE ?
-    ORDER BY (role = 'admin') DESC
+      u.id,
+      r.name AS role,
+      CASE WHEN u.mobile LIKE '+%' THEN '' ELSE '+91' END AS country_code,
+      u.mobile AS mobile_number,
+      u.password_hash,
+      u.name AS name_english,
+      NULL AS name_tamil,
+      NULL AS title,
+      u.email,
+      NULL AS avatar_url,
+      LOWER(u.status) AS status
+    FROM users u
+    INNER JOIN roles r ON r.id = u.role_id
+    WHERE u.mobile LIKE ? ${roleFilter}
+    ORDER BY FIELD(r.name, 'SUPER_ADMIN', 'ADMIN', 'PRIEST', 'ASSISTANT')
     LIMIT 1;
   `;
-  const [rows] = await pool.execute(fallbackQuery, [pattern]);
+  const [rows] = await pool.execute(fallbackQuery, [pattern, ...allowedRoles]);
   return rows.length > 0 ? rows[0] : null;
 };
 
@@ -125,19 +86,20 @@ const getStaffProfile = async (userId, phone = null) => {
 const findUserById = async (id) => {
   const query = `
     SELECT 
-      id,
-      role,
-      country_code,
-      mobile_number,
-      password_hash,
-      name_english,
-      name_tamil,
-      title,
-      email,
-      avatar_url,
-      status
-    FROM users
-    WHERE id = ?
+      u.id,
+      r.name AS role,
+      CASE WHEN u.mobile LIKE '+%' THEN '' ELSE '+91' END AS country_code,
+      u.mobile AS mobile_number,
+      u.password_hash,
+      u.name AS name_english,
+      NULL AS name_tamil,
+      NULL AS title,
+      u.email,
+      NULL AS avatar_url,
+      LOWER(u.status) AS status
+    FROM users u
+    INNER JOIN roles r ON r.id = u.role_id
+    WHERE u.id = ?
     LIMIT 1;
   `;
   const [rows] = await pool.execute(query, [id]);

@@ -229,6 +229,53 @@ The server will start with hot-reloading enabled at `http://localhost:5000`.
   ```
 - **Behavior**: Validates password complexity, updates hash using `bcrypt` (12 rounds), clears `must_change_password`, and terminates all active refresh sessions to enforce re-login.
 
+### 3. Bookings and Balances
+
+Both endpoints require an Admin or Super Admin Bearer token.
+
+#### `POST /api/v1/bookings`
+- **Purpose**: Create a pooja, horoscope, or outdoor event booking.
+- **Body**: Client and priest balances are calculated from the total and received/paid amounts.
+  ```json
+  {
+    "dateKey": "2026-10-28",
+    "title": "Ganapathi Homam",
+    "clientName": "Customer name",
+    "phone": "+919840122334",
+    "location": "Temple address",
+    "category": "temple",
+    "categoryLabelTamil": "கோவில்",
+    "timeSlot": "09:00 AM - 10:30 AM",
+    "priestId": "p-murugan",
+    "priestName": "Murugan",
+    "totalEventCharge": 5000,
+    "clientAdvanceAmount": 1000,
+    "clientTotalReceived": 1000,
+    "priestTotalPay": 2500,
+    "priestAdvancePaid": 500
+  }
+  ```
+
+#### `GET /api/v1/bookings/:bookingId/balance`
+- **Purpose**: Retrieve the client amount due and priest amount due for a booking.
+- **Example**: `GET /api/v1/bookings/1/balance`
+- **Response data**:
+  ```json
+  {
+    "bookingId": "1",
+    "bookingNumber": "MJ-2026-...",
+    "clientName": "Customer name",
+    "financials": {
+      "totalEventCharge": 5000,
+      "clientTotalReceived": 2000,
+      "clientBalanceAmount": 3000,
+      "priestTotalPay": 2500,
+      "priestAdvancePaid": 1000,
+      "priestBalanceAmount": 1500
+    }
+  }
+  ```
+
 ---
 
 ## 6. Database Schema & Migration Strategy
@@ -239,13 +286,14 @@ The server will start with hot-reloading enabled at `http://localhost:5000`.
 3. **`role_permissions`**: Many-to-many junction table mapping permissions to roles.
 4. **`users`**: System users with role foreign key, mobile index, bcrypt password hash, and `must_change_password` flag.
 5. **`user_sessions`**: Session storage for refresh token rotation, tracking SHA-256 token hashes, client IP, user agent, expiration, and server-side revocation.
-6. **`schema_migrations`**: Migration tracker to ensure schema migrations are applied exactly once.
+6. **`bookings`**: Pooja/event booking details and client/priest financial totals used by the balance endpoint.
+7. **`schema_migrations`**: Migration tracker to ensure schema migrations are applied exactly once.
 
 ### Adding New Migrations
 When adding a new feature (e.g., Bookings):
 1. Create a new `.sql` file in `database/migrations/` with a prefixed numbering format:
    ```text
-   database/migrations/002_create_bookings_tables.sql
+  database/migrations/002_create_bookings_table.sql
    ```
 2. Write clean, idempotent DDL queries (`CREATE TABLE IF NOT EXISTS`, explicit foreign keys, `InnoDB`, `utf8mb4`).
 3. Run `npm run migrate` to apply it to your database.

@@ -1,0 +1,21 @@
+$kind: http-request
+url: "{{baseUrl}}/attendance/record"
+method: PUT
+headers:
+  Content-Type: application/json
+  Authorization: Bearer {{adminToken}}
+body:
+  type: text
+  content: |-
+    {
+      "staffId": "{{staffId}}",
+      "dateKey": "{{today}}",
+      "status": "present",
+      "submissionTime": "08:30 AM",
+      "remarks": "Postman verification"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.test('Admin attendance update succeeds', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 17000

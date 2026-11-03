@@ -1,0 +1,10 @@
+$kind: http-request
+url: "{{baseUrl}}/bookings/{{bookingId}}/balance"
+method: GET
+headers:
+  Authorization: Bearer {{adminToken}}
+scripts:
+  - type: afterResponse
+    code: pm.test('Updated client balance is 3000', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().data.financials.clientBalanceAmount).to.eql(3000); });
+    language: text/javascript
+order: 11000

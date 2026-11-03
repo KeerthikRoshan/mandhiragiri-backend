@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/authRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
+const projectRoutes = require('./routes/projectRoutes');
 const { notFoundHandler, errorHandler } = require('./middleware/errorMiddleware');
 const { sendSuccess } = require('./utils/response');
 
@@ -56,6 +58,8 @@ app.get('/api/v1/health', healthCheckHandler);
 // 6. API Version 1 Routes
 const apiV1Router = express.Router();
 apiV1Router.use('/auth', authRoutes);
+apiV1Router.use('/bookings', bookingRoutes);
+apiV1Router.use('/', projectRoutes);
 
 app.use('/api/v1', apiV1Router);
 
