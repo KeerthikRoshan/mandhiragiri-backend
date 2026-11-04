@@ -1,7 +1,19 @@
 const { body, param, query, validationResult } = require('express-validator');
 const { sendError } = require('../utils/response');
 
+const normalizeStaffBody = (req) => {
+  if (req.body && typeof req.body === 'object') {
+    if (req.body.name_english !== undefined && req.body.nameEnglish === undefined) req.body.nameEnglish = req.body.name_english;
+    if (req.body.name_tamil !== undefined && req.body.nameTamil === undefined) req.body.nameTamil = req.body.name_tamil;
+    if (req.body.staff_role !== undefined && req.body.staffRole === undefined) req.body.staffRole = req.body.staff_role;
+    if (req.body.roleCategory !== undefined && req.body.staffRole === undefined) req.body.staffRole = req.body.roleCategory;
+    if (req.body.languages_spoken !== undefined && req.body.languagesSpoken === undefined) req.body.languagesSpoken = req.body.languages_spoken;
+    if (req.body.avatar_url !== undefined && req.body.avatarUrl === undefined) req.body.avatarUrl = req.body.avatar_url;
+  }
+};
+
 const validate = (rules) => async (req, res, next) => {
+  normalizeStaffBody(req);
   for (const rule of rules) await rule.run(req);
   const result = validationResult(req);
   if (result.isEmpty()) return next();
@@ -25,14 +37,109 @@ module.exports = {
     query('search').optional().trim().isLength({ max: 100 })
   ]),
   validateCreateStaff: validate([
-    body('nameEnglish').trim().isLength({ min: 2, max: 150 }),
-    body('phone').trim().matches(/^\+?[0-9\s-]{10,15}$/),
-    body('roleCategory').optional().isIn(['PRIEST', 'ASSISTANT']),
-    body('email').optional({ values: 'falsy' }).isEmail(),
-    body('nameTamil').optional().trim().isLength({ max: 150 }),
-    body('designationTamil').optional().trim().isLength({ max: 100 }),
-    body('designationEnglish').optional().trim().isLength({ max: 100 }),
-    body('password').optional().isLength({ min: 6 })
+    body('nameEnglish')
+      .trim()
+      .notEmpty().withMessage('Name in English is required.')
+      .isLength({ min: 2, max: 150 }).withMessage('Name in English must be between 2 and 150 characters.'),
+    body('nameTamil')
+      .trim()
+      .notEmpty().withMessage('Name in Tamil is required.')
+      .isLength({ min: 2, max: 150 }).withMessage('Name in Tamil must be between 2 and 150 characters.'),
+    body('staffRole')
+      .trim()
+      .notEmpty().withMessage('Staff role is required (Priest or Assistant).')
+      .custom((val) => ['priest', 'assistant'].includes(String(val).toLowerCase()))
+      .withMessage('Staff role must be either Priest or Assistant.'),
+    body('designation')
+      .trim()
+      .notEmpty().withMessage('Designation is required.')
+      .isLength({ min: 1, max: 150 }).withMessage('Designation must be at most 150 characters.'),
+    body('phone')
+      .trim()
+      .notEmpty().withMessage('Mobile number is required.')
+      .matches(/^\+?[0-9\s-]{10,15}$/).withMessage('Enter a valid 10-15 digit phone number.'),
+    body('password')
+      .notEmpty().withMessage('Password is required.')
+      .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long.'),
+    body('tradition')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Tradition must be at most 255 characters.'),
+    body('expertise')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Expertise must be at most 255 characters.'),
+    body('certification')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Certification must be at most 255 characters.'),
+    body('languagesSpoken')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Languages spoken must be at most 255 characters.'),
+    body('avatarUrl')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isLength({ max: 500 }).withMessage('Avatar URL must be at most 500 characters.'),
+    body('email')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isEmail().withMessage('Enter a valid email address.')
+  ]),
+  validateUpdateStaff: validate([
+    param('id').notEmpty().withMessage('Staff ID is required.'),
+    body('nameEnglish')
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 150 }).withMessage('Name in English must be between 2 and 150 characters.'),
+    body('nameTamil')
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 150 }).withMessage('Name in Tamil must be between 2 and 150 characters.'),
+    body('staffRole')
+      .optional()
+      .trim()
+      .custom((val) => ['priest', 'assistant'].includes(String(val).toLowerCase()))
+      .withMessage('Staff role must be either Priest or Assistant.'),
+    body('designation')
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 150 }).withMessage('Designation must be at most 150 characters.'),
+    body('phone')
+      .optional()
+      .trim()
+      .matches(/^\+?[0-9\s-]{10,15}$/).withMessage('Enter a valid 10-15 digit phone number.'),
+    body('password')
+      .optional()
+      .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long.'),
+    body('tradition')
+      .optional({ values: 'null' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Tradition must be at most 255 characters.'),
+    body('expertise')
+      .optional({ values: 'null' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Expertise must be at most 255 characters.'),
+    body('certification')
+      .optional({ values: 'null' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Certification must be at most 255 characters.'),
+    body('languagesSpoken')
+      .optional({ values: 'null' })
+      .trim()
+      .isLength({ max: 255 }).withMessage('Languages spoken must be at most 255 characters.'),
+    body('avatarUrl')
+      .optional({ values: 'null' })
+      .trim()
+      .isLength({ max: 500 }).withMessage('Avatar URL must be at most 500 characters.'),
+    body('status')
+      .optional()
+      .custom((val) => ['active', 'inactive'].includes(String(val).toLowerCase()))
+      .withMessage('Status must be Active or Inactive.'),
+    body('email')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isEmail().withMessage('Enter a valid email address.')
   ]),
   validateAttendanceQuery: validate([
     query('date').notEmpty().custom((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))),

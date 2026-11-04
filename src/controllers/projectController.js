@@ -33,6 +33,11 @@ const createStaff = asyncHandler(async (req, res) => {
   return sendSuccess(res, 'புரோகிதர் வெற்றிகரமாக சேர்க்கப்பட்டார்.', data, 201);
 });
 
+const updateStaff = asyncHandler(async (req, res) => {
+  const data = await projectService.updateStaff(req.params.id, req.body);
+  return sendSuccess(res, 'பணியாளர் விவரங்கள் வெற்றிகரமாக புதுப்பிக்கப்பட்டன.', data);
+});
+
 const dailyAttendance = asyncHandler(async (req, res) => {
   const data = await projectService.getDailyAttendance(req.query);
   return sendSuccess(res, 'Daily attendance retrieved.', data);
@@ -115,6 +120,7 @@ module.exports = {
   scheduleBookings,
   listStaff,
   createStaff,
+  updateStaff,
   dailyAttendance,
   updateAttendance,
   submitAttendance,

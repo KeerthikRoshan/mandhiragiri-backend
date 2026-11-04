@@ -19,6 +19,15 @@ const login = asyncHandler(async (req, res) => {
     userAgent
   });
 
+  console.log('\n========================================');
+  console.log(`[AUTH LOGIN SUCCESS]`);
+  console.log(`User: ${result.data.user?.nameEnglish || result.data.user?.id} (Role: ${result.data.user?.role})`);
+  console.log(`Mobile: ${targetMobile}`);
+  console.log(`JWT Token: ${result.data.token}`);
+  console.log(`Refresh Token: ${result.data.refreshToken}`);
+  console.log(`Expires At: ${result.data.expiresAt}`);
+  console.log('========================================\n');
+
   return sendSuccess(res, result.message, result.data, 200);
 });
 
@@ -39,6 +48,15 @@ const staffLogin = asyncHandler(async (req, res) => {
     userAgent
   });
 
+  console.log('\n========================================');
+  console.log(`[STAFF LOGIN SUCCESS]`);
+  console.log(`Staff: ${result.data.user?.nameEnglish} (ID: ${result.data.user?.staffId || result.data.user?.id})`);
+  console.log(`Mobile: ${targetMobile}`);
+  console.log(`JWT Token: ${result.data.token}`);
+  console.log(`Refresh Token: ${result.data.refreshToken}`);
+  console.log(`Expires At: ${result.data.expiresAt}`);
+  console.log('========================================\n');
+
   return sendSuccess(res, result.message, result.data, 200);
 });
 
@@ -55,6 +73,12 @@ const refresh = asyncHandler(async (req, res) => {
     ipAddress,
     userAgent
   });
+
+  console.log('\n========================================');
+  console.log(`[AUTH REFRESH SUCCESS]`);
+  console.log(`JWT Token: ${result.token}`);
+  console.log(`Refresh Token: ${result.refreshToken}`);
+  console.log('========================================\n');
 
   return sendSuccess(res, 'Session token refreshed successfully.', result, 200);
 });

@@ -93,18 +93,27 @@ const loginUser = async ({ mobileNumber, password, role, ipAddress, userAgent })
     if (staff) {
       userPayload = {
         id: String(staff.id),
-        staffId: String(staff.id),
+        staffId: staff.staff_id || String(staff.id),
         role: 'staff',
+        staffRole: staff.staff_role,
         nameEnglish: staff.name_english,
         nameTamil: staff.name_tamil,
-        designationTamil: staff.designation_tamil,
-        designationEnglish: staff.designation_english,
-        roleBadge: staff.role_badge,
+        designation: staff.designation,
         phone: staff.phone || (user.country_code ? `${user.country_code}${user.mobile_number}` : `+91${user.mobile_number}`),
-        traditionTamil: staff.tradition_tamil,
-        certificationTamil: staff.certification_tamil,
-        expertiseTamil: staff.expertise_tamil,
-        languagesTamil: staff.languages_tamil
+        tradition: staff.tradition,
+        certification: staff.certification,
+        expertise: staff.expertise,
+        languagesSpoken: staff.languages_spoken,
+        avatarUrl: staff.avatar_url,
+        // Backward-compatibility aliases for frontend
+        designationTamil: staff.designation,
+        designationEnglish: staff.designation,
+        roleBadge: staff.staff_role,
+        roleCategory: (staff.staff_role || 'PRIEST').toUpperCase(),
+        traditionTamil: staff.tradition,
+        certificationTamil: staff.certification,
+        expertiseTamil: staff.expertise,
+        languagesTamil: staff.languages_spoken
       };
     } else {
       userPayload = {
@@ -243,19 +252,28 @@ const getCurrentUser = async (userId) => {
     if (staff) {
       return {
         id: String(staff.id),
-        staffId: String(staff.id),
+        staffId: staff.staff_id || String(staff.id),
         role: 'staff',
+        staffRole: staff.staff_role,
         nameEnglish: staff.name_english,
         nameTamil: staff.name_tamil,
-        designationTamil: staff.designation_tamil,
-        designationEnglish: staff.designation_english,
-        roleBadge: staff.role_badge,
+        designation: staff.designation,
         phone: staff.phone,
-        traditionTamil: staff.tradition_tamil,
-        certificationTamil: staff.certification_tamil,
-        expertiseTamil: staff.expertise_tamil,
-        languagesTamil: staff.languages_tamil,
-        status: staff.status
+        tradition: staff.tradition,
+        certification: staff.certification,
+        expertise: staff.expertise,
+        languagesSpoken: staff.languages_spoken,
+        avatarUrl: staff.avatar_url,
+        status: staff.status,
+        // Backward-compatibility aliases for frontend
+        designationTamil: staff.designation,
+        designationEnglish: staff.designation,
+        roleBadge: staff.staff_role,
+        roleCategory: (staff.staff_role || 'PRIEST').toUpperCase(),
+        traditionTamil: staff.tradition,
+        certificationTamil: staff.certification,
+        expertiseTamil: staff.expertise,
+        languagesTamil: staff.languages_spoken
       };
     }
   }

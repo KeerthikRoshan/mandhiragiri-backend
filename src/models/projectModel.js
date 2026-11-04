@@ -69,7 +69,7 @@ const getScheduleBookings = async (date, category) => {
   const [rows] = await pool.execute(`
     SELECT b.*, s.name_english AS staff_name_english, s.name_tamil AS staff_name_tamil
     FROM bookings b
-    LEFT JOIN staff s ON CAST(s.id AS CHAR) = b.priest_id
+    LEFT JOIN staff s ON CAST(s.id AS CHAR) COLLATE utf8mb4_unicode_ci = b.priest_id COLLATE utf8mb4_unicode_ci
     WHERE b.date_key = ? AND b.status != 'cancelled' ${categoryFilter}
     ORDER BY b.time_slot ASC, b.id ASC;
   `, params);
@@ -80,13 +80,13 @@ const listStaff = async ({ status, search }) => {
   const conditions = [];
   const params = [];
   if (status && status !== 'all') {
-    conditions.push('s.status = ?');
-    params.push(status.toUpperCase());
+    conditions.push('LOWER(s.status) = ?');
+    params.push(status.toLowerCase());
   }
   if (search) {
-    conditions.push('(s.name_english LIKE ? OR s.name_tamil LIKE ? OR s.designation_tamil LIKE ? OR s.designation_english LIKE ? OR s.expertise_tamil LIKE ?)');
+    conditions.push('(s.name_english LIKE ? OR s.name_tamil LIKE ? OR s.designation LIKE ? OR s.tradition LIKE ? OR s.expertise LIKE ? OR s.languages_spoken LIKE ? OR s.staff_id LIKE ? OR s.phone LIKE ?)');
     const term = `%${search}%`;
-    params.push(term, term, term, term, term);
+    params.push(term, term, term, term, term, term, term, term);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const [rows] = await pool.execute(`
@@ -98,7 +98,7 @@ const listStaff = async ({ status, search }) => {
       (SELECT COUNT(*) FROM bookings b WHERE CAST(b.priest_id AS CHAR) = CAST(s.id AS CHAR) AND b.date_key = CURDATE() AND b.status != 'completed' AND b.status != 'cancelled') AS active_count,
       (SELECT COUNT(*) FROM bookings b WHERE CAST(b.priest_id AS CHAR) = CAST(s.id AS CHAR) AND b.date_key > CURDATE() AND b.status != 'cancelled') AS upcoming_count
     FROM staff s ${where}
-    ORDER BY s.name_english ASC;
+    ORDER BY s.id ASC;
   `, params);
   return rows;
 };
@@ -107,27 +107,162 @@ const createStaff = async ({ user, staff }) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const [roles] = await connection.execute('SELECT id FROM roles WHERE name = ? LIMIT 1;', [staff.roleCategory]);
+    const roleName = String(staff.staffRole || 'PRIEST').toUpperCase().includes('ASSISTANT')
+      ? 'ASSISTANT'
+      : 'PRIEST';
+    const [roles] = await connection.execute('SELECT id FROM roles WHERE name = ? LIMIT 1;', [roleName]);
     if (!roles.length) throw new Error('Configured staff role does not exist.');
+    const roleId = roles[0].id;
+
     const [userResult] = await connection.execute(`
       INSERT INTO users (role_id, mobile, password_hash, name, email, status, must_change_password)
-      VALUES (?, ?, ?, ?, ?, 'ACTIVE', 1);
-    `, [roles[0].id, user.mobile, user.passwordHash, staff.nameEnglish, user.email || null]);
+      VALUES (?, ?, ?, ?, ?, 'ACTIVE', 0);
+    `, [roleId, user.mobile, user.passwordHash, staff.nameEnglish, user.email || null]);
+    const userId = userResult.insertId;
+
+    const normalizedStaffRole = roleName === 'ASSISTANT' ? 'Assistant' : 'Priest';
     const [staffResult] = await connection.execute(`
       INSERT INTO staff (
-        user_id, name_english, name_tamil, designation_tamil, designation_english,
-        role_badge, role_category, phone, tradition_tamil, certification_tamil,
-        expertise_tamil, languages_tamil, avatar_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        user_id, staff_id, name_english, name_tamil, staff_role, designation,
+        phone, tradition, expertise, certification, languages_spoken, avatar_url, status
+      ) VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `, [
-      userResult.insertId, staff.nameEnglish, staff.nameTamil || null,
-      staff.designationTamil || null, staff.designationEnglish || null,
-      staff.roleBadge || null, staff.roleCategory, staff.phone,
-      staff.traditionTamil || null, staff.certificationTamil || null,
-      staff.expertiseTamil || null, staff.languagesTamil || null, staff.avatarUrl || null
+      userId,
+      staff.nameEnglish,
+      staff.nameTamil,
+      normalizedStaffRole,
+      staff.designation,
+      staff.phone,
+      staff.tradition || null,
+      staff.expertise || null,
+      staff.certification || null,
+      staff.languagesSpoken || null,
+      staff.avatarUrl || null,
+      staff.status || 'Active'
     ]);
+    const staffIdInt = staffResult.insertId;
+    const generatedStaffCode = `MJSTF${String(staffIdInt).padStart(5, '0')}`;
+
+    await connection.execute('UPDATE staff SET staff_id = ? WHERE id = ?;', [generatedStaffCode, staffIdInt]);
     await connection.commit();
-    return { id: staffResult.insertId, userId: userResult.insertId };
+
+    const [createdRows] = await connection.execute('SELECT * FROM staff WHERE id = ? LIMIT 1;', [staffIdInt]);
+    return { ...createdRows[0], userId };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+const getStaffById = async (idOrStaffId) => {
+  const [rows] = await pool.execute(
+    'SELECT * FROM staff WHERE id = ? OR staff_id = ? LIMIT 1;',
+    [idOrStaffId, idOrStaffId]
+  );
+  return rows[0] || null;
+};
+
+const findStaffByPhone = async (phone) => {
+  const cleanMobile = String(phone).replace(/\D/g, '').slice(-10);
+  const pattern = `%${cleanMobile}`;
+  const [rows] = await pool.execute('SELECT id, staff_id, phone, user_id FROM staff WHERE phone LIKE ? LIMIT 1;', [pattern]);
+  return rows[0] || null;
+};
+
+const findUserByMobile = async (mobile) => {
+  const cleanMobile = String(mobile).replace(/\D/g, '').slice(-10);
+  const pattern = `%${cleanMobile}`;
+  const [rows] = await pool.execute('SELECT id, mobile, role_id, status FROM users WHERE mobile LIKE ? LIMIT 1;', [pattern]);
+  return rows[0] || null;
+};
+
+const getRoleByName = async (roleName) => {
+  const [rows] = await pool.execute('SELECT id, name FROM roles WHERE name = ? LIMIT 1;', [roleName]);
+  return rows[0] || null;
+};
+
+const updateStaff = async (idOrStaffId, { userUpdates = {}, staffUpdates = {} }) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [existingRows] = await connection.execute(
+      'SELECT * FROM staff WHERE id = ? OR staff_id = ? LIMIT 1 FOR UPDATE;',
+      [idOrStaffId, idOrStaffId]
+    );
+    if (!existingRows.length) {
+      await connection.rollback();
+      return null;
+    }
+    const staff = existingRows[0];
+    const staffId = staff.id;
+    const userId = staff.user_id;
+
+    if (staffUpdates.phone && staffUpdates.phone !== staff.phone) {
+      const cleanMobile = String(staffUpdates.phone).replace(/\D/g, '').slice(-10);
+      const pattern = `%${cleanMobile}`;
+      const [dupStaff] = await connection.execute(
+        'SELECT id FROM staff WHERE phone LIKE ? AND id != ? LIMIT 1;',
+        [pattern, staffId]
+      );
+      if (dupStaff.length) {
+        await connection.rollback();
+        const err = new Error('Mobile number already registered to another staff member.');
+        err.statusCode = 409;
+        throw err;
+      }
+      if (userId) {
+        const [dupUser] = await connection.execute(
+          'SELECT id FROM users WHERE mobile LIKE ? AND id != ? LIMIT 1;',
+          [pattern, userId]
+        );
+        if (dupUser.length) {
+          await connection.rollback();
+          const err = new Error('Mobile number already registered to another user account.');
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+    }
+
+    const staffFields = [];
+    const staffParams = [];
+    for (const [col, val] of Object.entries(staffUpdates)) {
+      staffFields.push(`${col} = ?`);
+      staffParams.push(val);
+    }
+    if (staffFields.length > 0) {
+      staffFields.push('updated_at = CURRENT_TIMESTAMP');
+      staffParams.push(staffId);
+      await connection.execute(
+        `UPDATE staff SET ${staffFields.join(', ')} WHERE id = ?;`,
+        staffParams
+      );
+    }
+
+    if (userId && Object.keys(userUpdates).length > 0) {
+      const userFields = [];
+      const userParams = [];
+      for (const [col, val] of Object.entries(userUpdates)) {
+        userFields.push(`${col} = ?`);
+        userParams.push(val);
+      }
+      userParams.push(userId);
+      await connection.execute(
+        `UPDATE users SET ${userFields.join(', ')} WHERE id = ?;`,
+        userParams
+      );
+    }
+
+    await connection.commit();
+
+    const [updatedRows] = await connection.execute(
+      'SELECT * FROM staff WHERE id = ? LIMIT 1;',
+      [staffId]
+    );
+    return updatedRows[0];
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -145,12 +280,15 @@ const updateStaffAvatar = async (staffId, avatarUrl) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const [rows] = await connection.execute('SELECT avatar_url FROM staff WHERE id = ? FOR UPDATE;', [staffId]);
+    const [rows] = await connection.execute(
+      'SELECT avatar_url, id FROM staff WHERE id = ? OR staff_id = ? FOR UPDATE;',
+      [staffId, staffId]
+    );
     if (!rows.length) {
       await connection.rollback();
       return { notFound: true };
     }
-    await connection.execute('UPDATE staff SET avatar_url = ? WHERE id = ?;', [avatarUrl, staffId]);
+    await connection.execute('UPDATE staff SET avatar_url = ? WHERE id = ?;', [avatarUrl, rows[0].id]);
     await connection.commit();
     return { imageUrl: avatarUrl, previousImageUrl: rows[0].avatar_url };
   } catch (error) {
@@ -163,13 +301,13 @@ const updateStaffAvatar = async (staffId, avatarUrl) => {
 
 const getDailyAttendance = async (date) => {
   const [rows] = await pool.execute(`
-    SELECT s.id AS staff_id, s.name_english, s.name_tamil, s.designation_tamil,
-      s.designation_english, s.role_category, a.status, a.submission_time, a.remarks,
+    SELECT s.id AS staff_id, s.staff_id AS staff_code, s.name_english, s.name_tamil,
+      s.designation, s.staff_role, a.status, a.submission_time, a.remarks,
       a.updated_at, updater.name AS updated_by
     FROM staff s
     LEFT JOIN attendance_records a ON a.staff_id = s.id AND a.date_key = ?
     LEFT JOIN users updater ON updater.id = a.updated_by
-    WHERE s.status = 'ACTIVE'
+    WHERE LOWER(s.status) = 'active'
     ORDER BY s.name_english;
   `, [date]);
   return rows;
@@ -206,7 +344,7 @@ const listLeaveRequests = async (status) => {
     FROM leave_requests;
   `);
   const [leaves] = await pool.execute(`
-    SELECT l.*, s.name_english, s.name_tamil, s.designation_tamil
+    SELECT l.*, s.name_english, s.name_tamil, s.designation
     FROM leave_requests l
     INNER JOIN staff s ON s.id = l.staff_id
     WHERE (? = 'ALL' OR l.status = ?)
@@ -416,6 +554,11 @@ module.exports = {
   getScheduleBookings,
   listStaff,
   createStaff,
+  getStaffById,
+  findStaffByPhone,
+  findUserByMobile,
+  getRoleByName,
+  updateStaff,
   getStaffByUserId,
   updateStaffAvatar,
   getDailyAttendance,

@@ -143,35 +143,49 @@ const maskPhone = (phone) => {
   return digits.length >= 5 ? `+${digits.slice(0, 2)} ${digits.slice(2, 5)} XXXXX` : phone;
 };
 
+const formatStaff = (row) => ({
+  id: String(row.id),
+  staffId: row.staff_id || `MJSTF${String(row.id).padStart(5, '0')}`,
+  userId: row.user_id ? String(row.user_id) : null,
+  nameEnglish: row.name_english,
+  nameTamil: row.name_tamil,
+  staffRole: row.staff_role,
+  designation: row.designation,
+  phone: row.phone,
+  phoneDisplay: maskPhone(row.phone),
+  tradition: row.tradition,
+  expertise: row.expertise,
+  certification: row.certification,
+  languagesSpoken: row.languages_spoken,
+  avatarUrl: row.avatar_url,
+  status: (row.status || 'Active').toLowerCase(),
+  createdAt: row.created_at ? dateIso(row.created_at) : null,
+  updatedAt: row.updated_at ? dateIso(row.updated_at) : null,
+  // Backward-compatibility aliases for frontend
+  designationTamil: row.designation,
+  designationEnglish: row.designation,
+  roleCategory: (row.staff_role || 'Priest').toUpperCase(),
+  roleBadge: row.staff_role,
+  fullTitleTamil: [row.name_tamil, row.designation].filter(Boolean).join(' - '),
+  traditionTamil: row.tradition,
+  certificationTamil: row.certification,
+  expertiseTamil: row.expertise,
+  languagesTamil: row.languages_spoken,
+  metrics: {
+    totalBookings: Number(row.total_bookings || 0),
+    thisWeekBookings: Number(row.this_week_bookings || 0),
+    conflictsCount: Number(row.conflicts_count || 0)
+  },
+  tabCounts: {
+    past: Number(row.past_count || 0),
+    active: Number(row.active_count || 0),
+    upcoming: Number(row.upcoming_count || 0)
+  }
+});
+
 const listStaff = async ({ status = 'active', search = '' }) => {
   const rows = await projectModel.listStaff({ status, search });
-  const staff = rows.map((row) => ({
-    id: String(row.id),
-    nameEnglish: row.name_english,
-    nameTamil: row.name_tamil,
-    designationTamil: row.designation_tamil,
-    designationEnglish: row.designation_english,
-    roleBadge: row.role_badge,
-    fullTitleTamil: [row.name_tamil, row.designation_tamil].filter(Boolean).join(' - '),
-    traditionTamil: row.tradition_tamil,
-    certificationTamil: row.certification_tamil,
-    phone: row.phone,
-    phoneDisplay: maskPhone(row.phone),
-    expertiseTamil: row.expertise_tamil,
-    languagesTamil: row.languages_tamil,
-    avatarUrl: row.avatar_url,
-    status: row.status.toLowerCase(),
-    metrics: {
-      totalBookings: Number(row.total_bookings || 0),
-      thisWeekBookings: Number(row.this_week_bookings || 0),
-      conflictsCount: Number(row.conflicts_count || 0)
-    },
-    tabCounts: {
-      past: Number(row.past_count || 0),
-      active: Number(row.active_count || 0),
-      upcoming: Number(row.upcoming_count || 0)
-    }
-  }));
+  const staff = rows.map(formatStaff);
   return {
     totalCount: staff.length,
     activeCount: staff.filter((entry) => entry.status === 'active').length,
@@ -180,29 +194,141 @@ const listStaff = async ({ status = 'active', search = '' }) => {
 };
 
 const createStaff = async (input) => {
-  const roleCategory = String(input.roleCategory || input.designationEnglish || 'PRIEST').toUpperCase().includes('ASSISTANT')
-    ? 'ASSISTANT'
-    : 'PRIEST';
-  const temporaryPassword = input.password || crypto.randomBytes(9).toString('base64url');
-  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-  const phone = String(input.phone).replace(/[\s-]/g, '');
+  const phone = String(input.phone || '').replace(/[\s-]/g, '');
+  if (!phone) {
+    throw ApiError.badRequest('Mobile number is required.');
+  }
+
+  const duplicateStaff = await projectModel.findStaffByPhone(phone);
+  if (duplicateStaff) {
+    throw new ApiError(409, 'இந்த மொபைல் எண் ஏற்கனவே பணியாளராக பதிவு செய்யப்பட்டுள்ளது (Phone number already registered).', true, {
+      phone: 'A staff member with this phone number already exists.'
+    });
+  }
+  const duplicateUser = await projectModel.findUserByMobile(phone);
+  if (duplicateUser) {
+    throw new ApiError(409, 'இந்த மொபைல் எண் ஏற்கனவே பயனராக பதிவு செய்யப்பட்டுள்ளது (User already exists).', true, {
+      phone: 'A user account with this mobile number already exists.'
+    });
+  }
+
+  const staffRole = String(input.staffRole || input.staff_role || input.roleCategory || 'Priest').toLowerCase().includes('assistant')
+    ? 'Assistant'
+    : 'Priest';
+
+  const password = input.password || crypto.randomBytes(9).toString('base64url');
+  const passwordHash = await bcrypt.hash(password, 12);
+
   const created = await projectModel.createStaff({
-    user: { mobile: phone, email: input.email, passwordHash },
-    staff: { ...input, phone, roleCategory }
+    user: {
+      mobile: phone,
+      email: input.email ? input.email.trim() : null,
+      passwordHash
+    },
+    staff: {
+      nameEnglish: (input.nameEnglish || input.name_english || '').trim(),
+      nameTamil: (input.nameTamil || input.name_tamil || '').trim(),
+      staffRole,
+      designation: (input.designation || (staffRole === 'Assistant' ? 'Assistant' : 'Priest')).trim(),
+      phone,
+      tradition: input.tradition ? input.tradition.trim() : null,
+      expertise: input.expertise ? input.expertise.trim() : null,
+      certification: input.certification ? input.certification.trim() : null,
+      languagesSpoken: (input.languagesSpoken || input.languages_spoken) ? (input.languagesSpoken || input.languages_spoken).trim() : null,
+      avatarUrl: (input.avatarUrl || input.avatar_url) ? (input.avatarUrl || input.avatar_url).trim() : null,
+      status: 'Active'
+    }
   });
-  return {
-    id: String(created.id),
-    nameEnglish: input.nameEnglish,
-    nameTamil: input.nameTamil || null,
-    designationTamil: input.designationTamil || null,
-    designationEnglish: input.designationEnglish || (roleCategory === 'ASSISTANT' ? 'Assistant' : 'Priest'),
-    roleBadge: input.roleBadge || null,
-    phone,
-    phoneDisplay: maskPhone(phone),
-    status: 'active',
-    temporaryPassword,
-    createdAt: new Date().toISOString()
-  };
+
+  const response = formatStaff(created);
+  if (!input.password) {
+    response.temporaryPassword = password;
+  }
+  return response;
+};
+
+const updateStaff = async (id, input) => {
+  const existing = await projectModel.getStaffById(id);
+  if (!existing) {
+    throw new ApiError(404, 'பணியாளர் விவரம் கிடைக்கவில்லை (Staff member not found).', true);
+  }
+
+  const staffUpdates = {};
+  const userUpdates = {};
+
+  if (input.nameEnglish !== undefined || input.name_english !== undefined) {
+    const val = (input.nameEnglish !== undefined ? input.nameEnglish : input.name_english).trim();
+    staffUpdates.name_english = val;
+    userUpdates.name = val;
+  }
+
+  if (input.nameTamil !== undefined || input.name_tamil !== undefined) {
+    const val = (input.nameTamil !== undefined ? input.nameTamil : input.name_tamil).trim();
+    staffUpdates.name_tamil = val;
+  }
+
+  if (input.staffRole !== undefined || input.staff_role !== undefined || input.roleCategory !== undefined) {
+    const rawRole = input.staffRole !== undefined ? input.staffRole : (input.staff_role !== undefined ? input.staff_role : input.roleCategory);
+    const roleEnum = String(rawRole).toLowerCase().includes('assistant') ? 'Assistant' : 'Priest';
+    staffUpdates.staff_role = roleEnum;
+    const roleName = roleEnum === 'Assistant' ? 'ASSISTANT' : 'PRIEST';
+    const roleRow = await projectModel.getRoleByName(roleName);
+    if (roleRow) {
+      userUpdates.role_id = roleRow.id;
+    }
+  }
+
+  if (input.designation !== undefined) {
+    staffUpdates.designation = input.designation.trim();
+  }
+
+  if (input.phone !== undefined) {
+    const cleanPhone = String(input.phone).replace(/[\s-]/g, '');
+    staffUpdates.phone = cleanPhone;
+    userUpdates.mobile = cleanPhone;
+  }
+
+  if (input.tradition !== undefined) {
+    staffUpdates.tradition = input.tradition ? input.tradition.trim() : null;
+  }
+
+  if (input.expertise !== undefined) {
+    staffUpdates.expertise = input.expertise ? input.expertise.trim() : null;
+  }
+
+  if (input.certification !== undefined) {
+    staffUpdates.certification = input.certification ? input.certification.trim() : null;
+  }
+
+  if (input.languagesSpoken !== undefined || input.languages_spoken !== undefined) {
+    const val = input.languagesSpoken !== undefined ? input.languagesSpoken : input.languages_spoken;
+    staffUpdates.languages_spoken = val ? val.trim() : null;
+  }
+
+  if (input.avatarUrl !== undefined || input.avatar_url !== undefined) {
+    const val = input.avatarUrl !== undefined ? input.avatarUrl : input.avatar_url;
+    staffUpdates.avatar_url = val ? val.trim() : null;
+  }
+
+  if (input.status !== undefined) {
+    const statusEnum = String(input.status).toLowerCase() === 'active' ? 'Active' : 'Inactive';
+    staffUpdates.status = statusEnum;
+    userUpdates.status = statusEnum.toUpperCase();
+  }
+
+  if (input.email !== undefined) {
+    userUpdates.email = input.email ? input.email.trim() : null;
+  }
+
+  if (input.password) {
+    if (String(input.password).length < 6) {
+      throw ApiError.badRequest('Password must be at least 6 characters long.');
+    }
+    userUpdates.password_hash = await bcrypt.hash(input.password, 12);
+  }
+
+  const updatedStaff = await projectModel.updateStaff(existing.id, { userUpdates, staffUpdates });
+  return formatStaff(updatedStaff);
 };
 
 const getDailyAttendance = async ({ date, status, role, search }) => {
@@ -210,11 +336,15 @@ const getDailyAttendance = async ({ date, status, role, search }) => {
   const formatted = rows.map((row) => ({
     id: `${row.staff_id}_${date}`,
     staffId: String(row.staff_id),
+    staffCode: row.staff_code,
     staffNameEnglish: row.name_english,
     staffNameTamil: row.name_tamil,
-    designationTamil: row.designation_tamil,
-    designationEnglish: row.designation_english,
-    roleCategory: row.role_category.toLowerCase(),
+    designation: row.designation,
+    staffRole: row.staff_role,
+    // Backward-compatibility aliases
+    designationTamil: row.designation,
+    designationEnglish: row.designation,
+    roleCategory: (row.staff_role || 'Priest').toLowerCase(),
     status: row.status ? row.status.toLowerCase() : 'not_marked',
     submissionTime: displayTime(row.submission_time),
     remarks: row.remarks,
@@ -229,8 +359,8 @@ const getDailyAttendance = async ({ date, status, role, search }) => {
   };
   const records = formatted.filter((row) =>
     (!status || status === 'all' || row.status === status) &&
-    (!role || role === 'all' || row.roleCategory === role) &&
-    (!search || `${row.staffNameEnglish} ${row.staffNameTamil || ''} ${row.designationTamil || ''}`.toLowerCase().includes(search.toLowerCase()))
+    (!role || role === 'all' || row.roleCategory === role || (row.staffRole && row.staffRole.toLowerCase() === role.toLowerCase())) &&
+    (!search || `${row.staffNameEnglish} ${row.staffNameTamil || ''} ${row.designation || ''}`.toLowerCase().includes(search.toLowerCase()))
   );
   return { dateKey: date, summary, records };
 };
@@ -306,7 +436,8 @@ const formatLeave = (row) => {
     staffId: String(row.staff_id),
     staffNameEnglish: row.name_english,
     staffNameTamil: row.name_tamil,
-    designationTamil: row.designation_tamil,
+    designation: row.designation,
+    designationTamil: row.designation,
     startDate: String(row.start_date).slice(0, 10),
     endDate: String(row.end_date).slice(0, 10),
     totalDays: Math.floor((end - start) / 86400000) + 1,
@@ -379,9 +510,15 @@ const getStaffDashboard = async (userId) => {
   return {
     profile: {
       id: String(staff.id),
+      staffId: staff.staff_id || `MJSTF${String(staff.id).padStart(5, '0')}`,
       nameTamil: staff.name_tamil || staff.name_english,
-      designationTamil: staff.designation_tamil,
-      traditionTamil: staff.tradition_tamil
+      nameEnglish: staff.name_english,
+      staffRole: staff.staff_role,
+      designation: staff.designation,
+      tradition: staff.tradition,
+      // Backward-compatibility aliases
+      designationTamil: staff.designation,
+      traditionTamil: staff.tradition
     },
     todayAttendance: {
       isMarked: Boolean(data.attendance),
@@ -537,6 +674,7 @@ module.exports = {
   getSchedule,
   listStaff,
   createStaff,
+  updateStaff,
   getDailyAttendance,
   updateAttendance,
   submitAttendance,
@@ -548,7 +686,7 @@ module.exports = {
   getAdminProfile,
   uploadAdminAvatar,
   uploadStaffAvatar,
-  updateAdminProfile,
+    updateAdminProfile,
   recordBookingPayment,
   getBookingPayments,
   getBalanceReport
