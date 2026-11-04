@@ -118,6 +118,32 @@ The server will start with hot-reloading enabled at `http://localhost:5000`.
 | `npm run start` | Starts server in production mode with standard `node`. |
 | `npm run migrate` | Executes pending database schema migrations. |
 | `npm run seed:admin` | Seeds initial roles, permissions, and Super Admin user safely. |
+| `npm run panchang:import -- --start YYYY-MM-DD --end YYYY-MM-DD --location Madurai --lat 9.9252 --lon 78.1198 --timezone Asia/Kolkata` | Imports Panchangam records from OneBhakthi in English and Tamil. |
+| `npm run panchang:import -- --start 2026-01-01 --end 2040-12-31 --all-tamil-nadu` | Imports calendar data for all 38 Tamil Nadu district headquarters. |
+
+### Panchangam calendar data
+
+The Panchangam calendar uses OneBhakthi's documented Panchang endpoint. Add an API key to the local, git-ignored `.env` as `ONEBHAKTHI_API_KEY=...`; never commit or share the key. Run migrations, then import a date range:
+
+```powershell
+npm run migrate
+npm run panchang:import -- --start 2026-01-01 --end 2040-12-31 --location Madurai --lat 9.9252 --lon 78.1198 --timezone Asia/Kolkata
+```
+
+The import is resumable and safe to rerun: it upserts one row per date and location and skips completed batches. The provider returns up to 31 days per call; 2026–2040 takes 177 batches per location, fetched in English and Tamil. One location costs 354 calls; all 38 district headquarters in [tamilNaduDistrictHeadquarters.js](./database/tamilNaduDistrictHeadquarters.js) cost 13,452 calls. The Free plan's published 5,000 daily / 120 per minute limits are respected by sequential, paced requests; the all-city run spans at least three daily quota windows. If the daily quota runs out, rerun the same command after its reset to resume without repeating completed batches.
+
+`GET /api/v1/panchangam/today?date=YYYY-MM-DD&location=Madurai` keeps its existing fields and adds `dataSource` and `calendarData`. For imported rows, `calendarData.english` and `calendarData.tamil` contain the full provider response, including sunrise, sunset, tithi, nakshatra, yoga, karana, lunar month, Rahu Kalam, and attribution. Unsupported legacy fields such as Nalla Neram and Tamil solar-date badge remain `null`; the backend does not fabricate values. The provider uses Lahiri astronomical calculations, not Tamil Nadu's Vakya tables, so festival/observance dates can differ from a particular temple or printed almanac. Verify those decisions with the temple/priest before treating them as authoritative.
+
+### Profile image uploads
+
+Administrators (`ADMIN` or `SUPER_ADMIN`) can upload an image for their own profile or for a staff member. Apply migration `006_add_admin_avatar_url.sql` with `npm run migrate` before using the admin-profile upload endpoint. Uploads use `multipart/form-data` with one file field named `image`; accepted formats are JPEG, PNG, and WebP, up to 5 MB. The backend checks both the declared MIME type and the file signature, stores files under separate `uploads/admin/` and `uploads/staff/` folders with generated filenames, and makes them publicly readable at `/uploads/...`. The resulting relative URL is returned as `imageUrl` and is also exposed as `avatarUrl` in the relevant profile response.
+
+| Method | Endpoint | Access |
+| --- | --- | --- |
+| `POST` | `/api/v1/admin/profile/image` | Admin or Super Admin; updates the caller's profile image |
+| `POST` | `/api/v1/admin/staff/:staffId/image` | Admin or Super Admin; updates that staff profile's image |
+
+Send a bearer access token and form-data key `image` with a JPEG, PNG, or WebP file. Replacing an image removes the previous backend-managed file after the database update succeeds.
 
 ---
 

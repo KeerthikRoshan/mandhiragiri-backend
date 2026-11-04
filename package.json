@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "migrate": "node database/migrate.js",
     "seed:admin": "node database/seeders/superAdminSeeder.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "panchang:import": "node database/importPanchangam.js",
+    "test": "node --test"
   },
   "keywords": [
     "nodejs",
@@ -31,6 +32,7 @@
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.1",
+    "multer": "^2.5.0",
     "mysql2": "^3.24.6"
   },
   "devDependencies": {

@@ -73,6 +73,7 @@ module.exports = {
     body('email').optional({ values: 'falsy' }).isEmail(),
     body('addressTamil').optional({ values: 'null' }).isLength({ max: 1000 })
   ]),
+  validateStaffAvatar: validate([param('staffId').isInt({ min: 1 })]),
   validatePanchangam: validate([
     body('dateKey').custom((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))),
     body('location').trim().notEmpty().isLength({ max: 100 }),

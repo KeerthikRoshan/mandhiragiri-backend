@@ -20,6 +20,11 @@ pids/
 *.pid
 *.seed
 *.pid.lock
+/uploads/*
+!/uploads/admin/
+!/uploads/staff/
+!/uploads/admin/.gitkeep
+!/uploads/staff/.gitkeep
 
 # OS metadata
 .DS_Store

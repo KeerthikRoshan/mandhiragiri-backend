@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const path = require('path');
 const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/authRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
@@ -10,6 +11,7 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorMiddleware'
 const { sendSuccess } = require('./utils/response');
 
 const app = express();
+const uploadsDirectory = path.resolve(__dirname, '..', 'uploads');
 
 // 1. Security HTTP Headers
 app.use(helmet());
@@ -33,6 +35,14 @@ if (process.env.NODE_ENV !== 'test') {
 // 4. Request Body Parsers
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(uploadsDirectory, {
+  dotfiles: 'deny',
+  index: false,
+  maxAge: '1d'
+}));
 
 // 5. Health Check Handlers
 const healthCheckHandler = async (req, res) => {

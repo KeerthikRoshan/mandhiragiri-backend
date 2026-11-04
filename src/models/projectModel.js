@@ -27,8 +27,8 @@ const upsertPanchangam = async (data, updatedBy) => {
       tithi_title_tamil, tithi_title_english, tithi_end_time,
       nakshatra_title_tamil, nakshatra_title_english, nakshatra_end_time,
       nalla_neram_morning, nalla_neram_evening, rahu_kalam_time,
-      rahu_kalam_period, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      rahu_kalam_period, provider_data, data_source, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'manual', ?)
     ON DUPLICATE KEY UPDATE
       gregorian_badge = VALUES(gregorian_badge),
       tamil_date_badge = VALUES(tamil_date_badge),
@@ -42,6 +42,8 @@ const upsertPanchangam = async (data, updatedBy) => {
       nalla_neram_evening = VALUES(nalla_neram_evening),
       rahu_kalam_time = VALUES(rahu_kalam_time),
       rahu_kalam_period = VALUES(rahu_kalam_period),
+      provider_data = NULL,
+      data_source = 'manual',
       updated_by = VALUES(updated_by);
   `, [
     data.dateKey, data.location, data.gregorianBadge || null, data.tamilDateBadge || null,
@@ -137,6 +139,26 @@ const createStaff = async ({ user, staff }) => {
 const getStaffByUserId = async (userId) => {
   const [rows] = await pool.execute('SELECT * FROM staff WHERE user_id = ? LIMIT 1;', [userId]);
   return rows[0] || null;
+};
+
+const updateStaffAvatar = async (staffId, avatarUrl) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.execute('SELECT avatar_url FROM staff WHERE id = ? FOR UPDATE;', [staffId]);
+    if (!rows.length) {
+      await connection.rollback();
+      return { notFound: true };
+    }
+    await connection.execute('UPDATE staff SET avatar_url = ? WHERE id = ?;', [avatarUrl, staffId]);
+    await connection.commit();
+    return { imageUrl: avatarUrl, previousImageUrl: rows[0].avatar_url };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const getDailyAttendance = async (date) => {
@@ -279,11 +301,36 @@ const getAdminProfile = async (userId) => {
     SELECT u.id, u.name AS name_english, u.mobile, u.email,
       p.name_tamil, p.title_tamil, p.address_tamil, p.years_experience,
       p.horoscope_count, p.homam_count, p.accuracy_rate,
-      p.peedam_name_tamil, p.morning_hours, p.evening_hours, p.updated_at
+      p.peedam_name_tamil, p.morning_hours, p.evening_hours, p.avatar_url, p.updated_at
     FROM users u LEFT JOIN admin_profiles p ON p.user_id = u.id
     WHERE u.id = ? LIMIT 1;
   `, [userId]);
   return rows[0] || null;
+};
+
+const updateAdminAvatar = async (userId, avatarUrl) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [profiles] = await connection.execute(
+      'SELECT avatar_url FROM admin_profiles WHERE user_id = ? FOR UPDATE;',
+      [userId]
+    );
+    await connection.execute(`
+      INSERT INTO admin_profiles (user_id, avatar_url) VALUES (?, ?)
+      ON DUPLICATE KEY UPDATE avatar_url = VALUES(avatar_url);
+    `, [userId, avatarUrl]);
+    await connection.commit();
+    return {
+      imageUrl: avatarUrl,
+      previousImageUrl: profiles[0]?.avatar_url || null
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const updateAdminProfile = async ({ userId, phone, email, addressTamil }) => {
@@ -370,6 +417,7 @@ module.exports = {
   listStaff,
   createStaff,
   getStaffByUserId,
+  updateStaffAvatar,
   getDailyAttendance,
   upsertAttendance,
   submitAttendance,
@@ -379,6 +427,7 @@ module.exports = {
   getStaffDashboard,
   completeEvent,
   getAdminProfile,
+  updateAdminAvatar,
   updateAdminProfile,
   recordBookingPayment,
   listBookingPayments,

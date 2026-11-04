@@ -8,8 +8,8 @@ body:
   type: text
   content: |-
     {
-      "dateKey": "{{today}}",
-      "location": "Madurai",
+      "dateKey": "2099-01-01",
+      "location": "Postman Test Location",
       "gregorianBadge": "Postman test date",
       "tamilDateBadge": "சோதனை நாள்",
       "tithiTitleTamil": "சோதனை திதி",

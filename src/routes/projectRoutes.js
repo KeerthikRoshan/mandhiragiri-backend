@@ -2,6 +2,7 @@ const express = require('express');
 const controller = require('../controllers/projectController');
 const validation = require('../validators/projectValidator');
 const { authenticate, authorizeRoles } = require('../middleware/authMiddleware');
+const { uploadSingleImage } = require('../middleware/imageUploadMiddleware');
 
 const router = express.Router();
 const adminOnly = [authenticate, authorizeRoles('SUPER_ADMIN', 'ADMIN')];
@@ -23,6 +24,8 @@ router.get('/staff/me/dashboard', ...staffOnly, controller.staffDashboard);
 router.post('/events/:eventId/complete', ...staffOnly, validation.validateEventCompletion, controller.completeEvent);
 router.get('/admin/profile', ...adminOnly, controller.adminProfile);
 router.put('/admin/profile', ...adminOnly, validation.validateAdminProfile, controller.updateAdminProfile);
+router.post('/admin/profile/image', ...adminOnly, uploadSingleImage, controller.uploadAdminAvatar);
+router.post('/admin/staff/:staffId/image', ...adminOnly, validation.validateStaffAvatar, uploadSingleImage, controller.uploadStaffAvatar);
 router.get('/reports/balances', ...adminOnly, validation.validateBalanceReport, controller.balanceReport);
 
 module.exports = router;

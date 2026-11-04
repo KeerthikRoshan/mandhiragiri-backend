@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const projectModel = require('../models/projectModel');
+const profileImageService = require('./profileImageService');
 const ApiError = require('../utils/ApiError');
 
 const amount = (value) => Number(Number(value || 0).toFixed(2));
@@ -21,6 +22,11 @@ const displayTime = (value) => {
 };
 
 const dateIso = (value) => value instanceof Date ? value.toISOString() : value;
+
+const parseProviderData = (value) => {
+  if (!value) return null;
+  return typeof value === 'string' ? JSON.parse(value) : value;
+};
 
 const getDashboardOverview = async (userId) => {
   const row = await projectModel.getDashboardOverview(userId);
@@ -61,7 +67,9 @@ const getPanchangam = async ({ date, location }) => {
       time: row.rahu_kalam_time,
       period: row.rahu_kalam_period,
       badge: 'விலக்குக'
-    }
+    },
+    dataSource: row.data_source || 'manual',
+    calendarData: parseProviderData(row.provider_data)
   };
 };
 
@@ -432,6 +440,7 @@ const getAdminProfile = async (userId) => {
     titleTamil: row.title_tamil,
     phone: row.mobile,
     email: row.email,
+    avatarUrl: row.avatar_url,
     addressTamil: row.address_tamil,
     metrics: {
       yearsExperience: row.years_experience,
@@ -446,6 +455,18 @@ const getAdminProfile = async (userId) => {
     }
   };
 };
+
+const uploadAdminAvatar = async (userId, file) => profileImageService.uploadProfileImage({
+  category: 'admin',
+  userId,
+  file
+});
+
+const uploadStaffAvatar = async (staffId, file) => profileImageService.uploadProfileImage({
+  category: 'staff',
+  staffId,
+  file
+});
 
 const updateAdminProfile = async (input, userId) => {
   const row = await projectModel.updateAdminProfile({ ...input, userId });
@@ -525,6 +546,8 @@ module.exports = {
   getStaffDashboard,
   completeEvent,
   getAdminProfile,
+  uploadAdminAvatar,
+  uploadStaffAvatar,
   updateAdminProfile,
   recordBookingPayment,
   getBookingPayments,

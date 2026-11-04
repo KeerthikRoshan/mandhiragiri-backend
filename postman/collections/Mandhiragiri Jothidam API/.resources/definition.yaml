@@ -1,5 +1,5 @@
 $kind: collection
-description: End-to-end API flow for health, authentication, booking balances, staff, attendance, leave, Panchangam, dashboard, and admin profile.
+description: End-to-end API flow for health, authentication, booking balances, staff, attendance, leave, Panchangam, dashboard, admin profile, and profile images.
 variables:
   baseUrl: http://localhost:5000/api/v1
   adminPhone: "9876543210"
@@ -17,6 +17,8 @@ variables:
   today: ""
   leaveStart: ""
   leaveEnd: ""
+  adminImageFile: ""
+  staffImageFile: ""
 scripts:
   - type: http:beforeRequest
     code: |-

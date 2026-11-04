@@ -83,6 +83,16 @@ const updateAdminProfile = asyncHandler(async (req, res) => {
   return sendSuccess(res, 'சுயவிவரம் வெற்றிகரமாக மாற்றப்பட்டது (Profile updated successfully).', data);
 });
 
+const uploadAdminAvatar = asyncHandler(async (req, res) => {
+  const data = await projectService.uploadAdminAvatar(req.user.id, req.file);
+  return sendSuccess(res, 'Admin profile image uploaded successfully.', data);
+});
+
+const uploadStaffAvatar = asyncHandler(async (req, res) => {
+  const data = await projectService.uploadStaffAvatar(req.params.staffId, req.file);
+  return sendSuccess(res, 'Staff profile image uploaded successfully.', data);
+});
+
 const recordBookingPayment = asyncHandler(async (req, res) => {
   const data = await projectService.recordBookingPayment({ ...req.body, bookingId: req.params.bookingId }, req.user.id);
   return sendSuccess(res, 'Payment recorded successfully.', data, 201);
@@ -115,6 +125,8 @@ module.exports = {
   completeEvent,
   adminProfile,
   updateAdminProfile,
+  uploadAdminAvatar,
+  uploadStaffAvatar,
   recordBookingPayment,
   bookingPayments,
   balanceReport
