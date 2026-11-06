@@ -1,5 +1,6 @@
 const express = require('express');
 const controller = require('../controllers/projectController');
+const bookingController = require('../controllers/bookingController');
 const validation = require('../validators/projectValidator');
 const { authenticate, authorizeRoles } = require('../middleware/authMiddleware');
 const { uploadSingleImage } = require('../middleware/imageUploadMiddleware');
@@ -8,6 +9,8 @@ const router = express.Router();
 const adminOnly = [authenticate, authorizeRoles('SUPER_ADMIN', 'ADMIN')];
 const staffOnly = [authenticate, authorizeRoles('PRIEST', 'ASSISTANT', 'STAFF')];
 const adminOrStaff = [authenticate, authorizeRoles('SUPER_ADMIN', 'ADMIN', 'STAFF', 'PRIEST', 'ASSISTANT')];
+
+router.get('/event-types', ...adminOnly, bookingController.listEventTypes);
 
 router.get('/dashboard/overview', ...adminOnly, controller.dashboardOverview);
 router.get('/panchangam/today', validation.validatePanchangamQuery, controller.panchangamToday);
