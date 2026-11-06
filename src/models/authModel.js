@@ -11,7 +11,7 @@ const findUserByMobileAndRole = async (mobileNumber, role = null) => {
   const pattern = `%${cleanMobile}`;
   const normalizedRole = role ? role.toUpperCase() : null;
   const allowedRoles = normalizedRole === 'STAFF'
-    ? ['PRIEST', 'ASSISTANT']
+    ? ['STAFF', 'PRIEST', 'ASSISTANT']
     : normalizedRole === 'ADMIN'
       ? ['SUPER_ADMIN', 'ADMIN']
       : normalizedRole
@@ -35,8 +35,8 @@ const findUserByMobileAndRole = async (mobileNumber, role = null) => {
       LOWER(u.status) AS status
     FROM users u
     INNER JOIN roles r ON r.id = u.role_id
-    WHERE u.mobile LIKE ? ${roleFilter}
-    ORDER BY FIELD(r.name, 'SUPER_ADMIN', 'ADMIN', 'PRIEST', 'ASSISTANT')
+    WHERE u.mobile LIKE ? ${roleFilter} AND UPPER(u.status) != 'DELETED'
+    ORDER BY FIELD(r.name, 'SUPER_ADMIN', 'ADMIN', 'STAFF', 'PRIEST', 'ASSISTANT')
     LIMIT 1;
   `;
   const [rows] = await pool.execute(fallbackQuery, [pattern, ...allowedRoles]);
@@ -98,7 +98,7 @@ const findUserById = async (id) => {
       LOWER(u.status) AS status
     FROM users u
     INNER JOIN roles r ON r.id = u.role_id
-    WHERE u.id = ?
+    WHERE u.id = ? AND UPPER(u.status) != 'DELETED'
     LIMIT 1;
   `;
   const [rows] = await pool.execute(query, [id]);

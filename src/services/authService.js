@@ -10,7 +10,7 @@ const {
 // Dummy hash for constant-time comparison against nonexistent users
 const DUMMY_HASH = '$2b$12$e8Y6/m5L4wO7q3NlWpA1q.1xYk2YyJ9kGqE9x0sWk9N9N9N9N9N9e';
 const isActive = (status) => String(status).toLowerCase() === 'active';
-const isStaffRole = (role) => ['PRIEST', 'ASSISTANT'].includes(String(role).toUpperCase());
+const isStaffRole = (role) => ['STAFF', 'PRIEST', 'ASSISTANT'].includes(String(role).toUpperCase());
 
 /**
  * Calculate refresh token expiry date

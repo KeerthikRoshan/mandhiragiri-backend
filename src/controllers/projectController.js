@@ -24,18 +24,60 @@ const scheduleBookings = asyncHandler(async (req, res) => {
 });
 
 const listStaff = asyncHandler(async (req, res) => {
+  console.log('[LIST_STAFF] Controller: Retrieving staff directory with query filters:', req.query);
   const data = await projectService.listStaff(req.query);
+  console.log(`[LIST_STAFF] Controller: Retrieved ${data.staff.length} staff records (totalCount: ${data.totalCount}, activeCount: ${data.activeCount})`);
   return sendSuccess(res, 'Staff directory retrieved.', data);
 });
 
 const createStaff = asyncHandler(async (req, res) => {
-  const data = await projectService.createStaff(req.body);
-  return sendSuccess(res, 'புரோகிதர் வெற்றிகரமாக சேர்க்கப்பட்டார்.', data, 201);
+  console.log('[CREATE_STAFF] [3/5] Controller: Processing createStaff request');
+  console.log('Initiated by Admin:', req.user ? `${req.user.nameEnglish || req.user.id} (${req.user.role})` : 'Unknown');
+  try {
+    const data = await projectService.createStaff(req.body);
+    console.log('[CREATE_STAFF] Controller: Successfully processed staff creation:');
+    console.log('Generated Staff Code:', data.staffId);
+    console.log('Database ID:', data.id);
+    console.log('Staff Name:', data.nameEnglish);
+    console.log('Staff Role (Category):', data.staffRole);
+    return sendSuccess(res, 'புரோகிதர் வெற்றிகரமாக சேர்க்கப்பட்டார்.', data, 201);
+  } catch (error) {
+    console.error('\n========================================');
+    console.error('[CREATE_STAFF] [ERROR] Controller caught error during staff creation:');
+    console.error('Error Name:', error.name);
+    console.error('Error Message:', error.message);
+    if (error.statusCode) console.error('Status Code:', error.statusCode);
+    if (error.errors) console.error('Field Errors:', JSON.stringify(error.errors, null, 2));
+    console.error('Stack Trace:', error.stack);
+    console.error('========================================\n');
+    throw error;
+  }
 });
 
 const updateStaff = asyncHandler(async (req, res) => {
-  const data = await projectService.updateStaff(req.params.id, req.body);
-  return sendSuccess(res, 'பணியாளர் விவரங்கள் வெற்றிகரமாக புதுப்பிக்கப்பட்டன.', data);
+  console.log('[UPDATE_STAFF] Controller: Processing updateStaff request for ID:', req.params.id);
+  console.log('Initiated by Admin:', req.user ? `${req.user.nameEnglish || req.user.id} (${req.user.role})` : 'Unknown');
+  try {
+    const data = await projectService.updateStaff(req.params.id, req.body);
+    console.log('[UPDATE_STAFF] Controller: Successfully updated staff member:', {
+      id: data.id,
+      staffId: data.staffId,
+      nameEnglish: data.nameEnglish,
+      status: data.status,
+      isDeleted: data.isDeleted
+    });
+    return sendSuccess(res, 'பணியாளர் விவரங்கள் வெற்றிகரமாக புதுப்பிக்கப்பட்டன.', data);
+  } catch (error) {
+    console.error('\n========================================');
+    console.error('[UPDATE_STAFF] [ERROR] Controller caught error during staff update:');
+    console.error('Error Name:', error.name);
+    console.error('Error Message:', error.message);
+    if (error.statusCode) console.error('Status Code:', error.statusCode);
+    if (error.errors) console.error('Field Errors:', JSON.stringify(error.errors, null, 2));
+    console.error('Stack Trace:', error.stack);
+    console.error('========================================\n');
+    throw error;
+  }
 });
 
 const dailyAttendance = asyncHandler(async (req, res) => {
@@ -46,6 +88,11 @@ const dailyAttendance = asyncHandler(async (req, res) => {
 const updateAttendance = asyncHandler(async (req, res) => {
   const data = await projectService.updateAttendance(req.body, req.user.id);
   return sendSuccess(res, 'வருகைப் பதிவு வெற்றிகரமாக திருத்தப்பட்டது.', data);
+});
+
+const staffMonthlyAttendance = asyncHandler(async (req, res) => {
+  const data = await projectService.getStaffMonthlyAttendance(req.params.staffId, req.query);
+  return sendSuccess(res, 'Monthly attendance retrieved.', data);
 });
 
 const submitAttendance = asyncHandler(async (req, res) => {
@@ -123,6 +170,7 @@ module.exports = {
   updateStaff,
   dailyAttendance,
   updateAttendance,
+  staffMonthlyAttendance,
   submitAttendance,
   allLeaveRequests,
   decideLeave,

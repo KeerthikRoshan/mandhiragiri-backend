@@ -140,7 +140,10 @@ const getSchedule = async ({ date, category }) => {
 
 const maskPhone = (phone) => {
   const digits = String(phone || '').replace(/\D/g, '');
-  return digits.length >= 5 ? `+${digits.slice(0, 2)} ${digits.slice(2, 5)} XXXXX` : phone;
+
+  return digits.length >= 5
+    ? `${digits.slice(0, 5)}${'X'.repeat(digits.length - 5)}`
+    : digits;
 };
 
 const formatStaff = (row) => ({
@@ -158,7 +161,9 @@ const formatStaff = (row) => ({
   certification: row.certification,
   languagesSpoken: row.languages_spoken,
   avatarUrl: row.avatar_url,
-  status: (row.status || 'Active').toLowerCase(),
+  status: (row.status || 'Active').toLowerCase() === 'active' ? 'active' : 'inactive',
+  userStatus: row.user_status ? String(row.user_status).toLowerCase() : 'active',
+  isDeleted: row.user_status ? String(row.user_status).toUpperCase() === 'DELETED' : false,
   createdAt: row.created_at ? dateIso(row.created_at) : null,
   updatedAt: row.updated_at ? dateIso(row.updated_at) : null,
   // Backward-compatibility aliases for frontend
@@ -183,7 +188,7 @@ const formatStaff = (row) => ({
   }
 });
 
-const listStaff = async ({ status = 'active', search = '' }) => {
+const listStaff = async ({ status = 'all', search = '' }) => {
   const rows = await projectModel.listStaff({ status, search });
   const staff = rows.map(formatStaff);
   return {
@@ -194,29 +199,38 @@ const listStaff = async ({ status = 'active', search = '' }) => {
 };
 
 const createStaff = async (input) => {
+  console.log('[CREATE_STAFF] [4/5] Service: Processing business logic');
   const phone = String(input.phone || '').replace(/[\s-]/g, '');
   if (!phone) {
+    console.error('[CREATE_STAFF] Service: Validation error - Phone number missing');
     throw ApiError.badRequest('Mobile number is required.');
   }
 
+  console.log('[CREATE_STAFF] Service: Checking for existing staff with phone:', phone);
   const duplicateStaff = await projectModel.findStaffByPhone(phone);
   if (duplicateStaff) {
+    console.error('[CREATE_STAFF] Service: Duplicate found in staff table for phone:', phone);
     throw new ApiError(409, 'இந்த மொபைல் எண் ஏற்கனவே பணியாளராக பதிவு செய்யப்பட்டுள்ளது (Phone number already registered).', true, {
       phone: 'A staff member with this phone number already exists.'
     });
   }
+
+  console.log('[CREATE_STAFF] Service: Checking for existing user account with mobile:', phone);
   const duplicateUser = await projectModel.findUserByMobile(phone);
   if (duplicateUser) {
+    console.error('[CREATE_STAFF] Service: Duplicate found in users table for mobile:', phone);
     throw new ApiError(409, 'இந்த மொபைல் எண் ஏற்கனவே பயனராக பதிவு செய்யப்பட்டுள்ளது (User already exists).', true, {
       phone: 'A user account with this mobile number already exists.'
     });
   }
 
-  const staffRole = String(input.staffRole || input.staff_role || input.roleCategory || 'Priest').toLowerCase().includes('assistant')
-    ? 'Assistant'
-    : 'Priest';
+  // Priest or Assistant is the staff category; the main user role is always STAFF
+  const rawRole = input.staffRole || input.staff_role || input.staffCategory || input.roleCategory || input.role || 'Priest';
+  const staffRole = String(rawRole).toLowerCase().includes('assistant') ? 'Assistant' : 'Priest';
+  console.log(`[CREATE_STAFF] Service: Resolved staff category: "${staffRole}" (User role will be: STAFF)`);
 
   const password = input.password || crypto.randomBytes(9).toString('base64url');
+  console.log('[CREATE_STAFF] Service: Hashing staff user credentials...');
   const passwordHash = await bcrypt.hash(password, 12);
 
   const created = await projectModel.createStaff({
@@ -248,87 +262,162 @@ const createStaff = async (input) => {
 };
 
 const updateStaff = async (id, input) => {
+  console.log('\n========================================');
+  console.log('[UPDATE_STAFF] [1/3] Service: Processing staff update for identifier:', id);
+  const sanitizedInput = { ...input };
+  if (sanitizedInput.password) sanitizedInput.password = '******';
+  console.log('Update payload:', JSON.stringify(sanitizedInput, null, 2));
+
   const existing = await projectModel.getStaffById(id);
   if (!existing) {
+    console.error('[UPDATE_STAFF] Service: Staff member not found for ID/code:', id);
     throw new ApiError(404, 'பணியாளர் விவரம் கிடைக்கவில்லை (Staff member not found).', true);
   }
+  console.log(`[UPDATE_STAFF] Service: Found existing staff record ID: ${existing.id}, Staff Code: ${existing.staff_id}, User ID: ${existing.user_id}`);
 
   const staffUpdates = {};
   const userUpdates = {};
 
+  // 1. English Name
   if (input.nameEnglish !== undefined || input.name_english !== undefined) {
     const val = (input.nameEnglish !== undefined ? input.nameEnglish : input.name_english).trim();
     staffUpdates.name_english = val;
     userUpdates.name = val;
   }
 
+  // 2. Tamil Name
   if (input.nameTamil !== undefined || input.name_tamil !== undefined) {
     const val = (input.nameTamil !== undefined ? input.nameTamil : input.name_tamil).trim();
     staffUpdates.name_tamil = val;
   }
 
-  if (input.staffRole !== undefined || input.staff_role !== undefined || input.roleCategory !== undefined) {
-    const rawRole = input.staffRole !== undefined ? input.staffRole : (input.staff_role !== undefined ? input.staff_role : input.roleCategory);
+  // 3. Staff Role / Category (Priest / Assistant)
+  if (input.staffRole !== undefined || input.staff_role !== undefined || input.roleCategory !== undefined || input.staffCategory !== undefined || input.role !== undefined) {
+    const rawRole = input.staffRole !== undefined
+      ? input.staffRole
+      : (input.staff_role !== undefined
+        ? input.staff_role
+        : (input.staffCategory !== undefined
+          ? input.staffCategory
+          : (input.roleCategory !== undefined
+            ? input.roleCategory
+            : input.role)));
     const roleEnum = String(rawRole).toLowerCase().includes('assistant') ? 'Assistant' : 'Priest';
     staffUpdates.staff_role = roleEnum;
-    const roleName = roleEnum === 'Assistant' ? 'ASSISTANT' : 'PRIEST';
-    const roleRow = await projectModel.getRoleByName(roleName);
-    if (roleRow) {
-      userUpdates.role_id = roleRow.id;
+    // Main user role in users table remains STAFF
+    const staffRoleRow = await projectModel.getRoleByName('STAFF');
+    if (staffRoleRow) {
+      userUpdates.role_id = staffRoleRow.id;
     }
   }
 
+  // 4. Designation
   if (input.designation !== undefined) {
-    staffUpdates.designation = input.designation.trim();
+    staffUpdates.designation = String(input.designation).trim();
   }
 
-  if (input.phone !== undefined) {
-    const cleanPhone = String(input.phone).replace(/[\s-]/g, '');
-    staffUpdates.phone = cleanPhone;
-    userUpdates.mobile = cleanPhone;
+  // 5. Phone / Mobile Number
+  if (input.phone !== undefined || input.mobile !== undefined || input.mobileNumber !== undefined) {
+    const rawPhone = input.phone !== undefined ? input.phone : (input.mobile !== undefined ? input.mobile : input.mobileNumber);
+    const cleanPhone = String(rawPhone).replace(/[\s-]/g, '');
+    if (cleanPhone) {
+      staffUpdates.phone = cleanPhone;
+      userUpdates.mobile = cleanPhone;
+    }
   }
 
+  // 6. Tradition
   if (input.tradition !== undefined) {
-    staffUpdates.tradition = input.tradition ? input.tradition.trim() : null;
+    staffUpdates.tradition = input.tradition ? String(input.tradition).trim() : null;
   }
 
+  // 7. Expertise
   if (input.expertise !== undefined) {
-    staffUpdates.expertise = input.expertise ? input.expertise.trim() : null;
+    staffUpdates.expertise = input.expertise ? String(input.expertise).trim() : null;
   }
 
+  // 8. Certification
   if (input.certification !== undefined) {
-    staffUpdates.certification = input.certification ? input.certification.trim() : null;
+    staffUpdates.certification = input.certification ? String(input.certification).trim() : null;
   }
 
+  // 9. Languages Spoken
   if (input.languagesSpoken !== undefined || input.languages_spoken !== undefined) {
     const val = input.languagesSpoken !== undefined ? input.languagesSpoken : input.languages_spoken;
-    staffUpdates.languages_spoken = val ? val.trim() : null;
+    staffUpdates.languages_spoken = val ? String(val).trim() : null;
   }
 
+  // 10. Avatar / Profile Image URL
   if (input.avatarUrl !== undefined || input.avatar_url !== undefined) {
     const val = input.avatarUrl !== undefined ? input.avatarUrl : input.avatar_url;
-    staffUpdates.avatar_url = val ? val.trim() : null;
+    staffUpdates.avatar_url = val ? String(val).trim() : null;
   }
 
-  if (input.status !== undefined) {
-    const statusEnum = String(input.status).toLowerCase() === 'active' ? 'Active' : 'Inactive';
+  // 11. Status and Soft Deletion Handling:
+  // - Use staff.status for active/deactive status updates.
+  // - Use users.status for staff account soft deletion.
+  const isSoftDelete = input.isDeleted === true ||
+    input.softDelete === true ||
+    input.deleted === true ||
+    (input.status !== undefined && String(input.status).toLowerCase() === 'deleted') ||
+    (input.userStatus !== undefined && String(input.userStatus).toUpperCase() === 'DELETED');
+
+  const isRestore = input.isDeleted === false ||
+    input.softDelete === false ||
+    input.deleted === false ||
+    (input.userStatus !== undefined && String(input.userStatus).toUpperCase() === 'ACTIVE');
+
+  if (isSoftDelete) {
+    console.log('[UPDATE_STAFF] Service: Soft-deletion requested for staff account');
+    userUpdates.status = 'DELETED';
+    staffUpdates.status = 'Inactive';
+  } else if (isRestore) {
+    console.log('[UPDATE_STAFF] Service: Restoring soft-deleted staff account to ACTIVE');
+    userUpdates.status = 'ACTIVE';
+    if (input.status !== undefined) {
+      const s = String(input.status).toLowerCase();
+      staffUpdates.status = (s === 'inactive' || s === 'deactive') ? 'Inactive' : 'Active';
+    } else {
+      staffUpdates.status = 'Active';
+    }
+  } else if (input.status !== undefined) {
+    // Active or Deactive update on staff.status only
+    const s = String(input.status).toLowerCase();
+    const statusEnum = (s === 'inactive' || s === 'deactive') ? 'Inactive' : 'Active';
     staffUpdates.status = statusEnum;
-    userUpdates.status = statusEnum.toUpperCase();
+    console.log(`[UPDATE_STAFF] Service: Active/Deactive update -> staff.status = ${statusEnum}`);
   }
 
+  // 12. Email
   if (input.email !== undefined) {
-    userUpdates.email = input.email ? input.email.trim() : null;
+    userUpdates.email = input.email ? String(input.email).trim() : null;
   }
 
+  // 13. Password
   if (input.password) {
     if (String(input.password).length < 6) {
       throw ApiError.badRequest('Password must be at least 6 characters long.');
     }
+    console.log('[UPDATE_STAFF] Service: Hashing new password for authentication user');
     userUpdates.password_hash = await bcrypt.hash(input.password, 12);
   }
 
+  console.log('[UPDATE_STAFF] [2/3] Service: Prepared database updates:');
+  console.log('Staff Updates:', staffUpdates);
+  console.log('User Updates:', userUpdates);
+
   const updatedStaff = await projectModel.updateStaff(existing.id, { userUpdates, staffUpdates });
-  return formatStaff(updatedStaff);
+  const formatted = formatStaff(updatedStaff);
+  console.log('[UPDATE_STAFF] [3/3] Service: Staff update completed successfully:', {
+    id: formatted.id,
+    staffId: formatted.staffId,
+    nameEnglish: formatted.nameEnglish,
+    staffRole: formatted.staffRole,
+    status: formatted.status,
+    isDeleted: formatted.isDeleted
+  });
+  console.log('========================================\n');
+  return formatted;
 };
 
 const getDailyAttendance = async ({ date, status, role, search }) => {
@@ -341,11 +430,14 @@ const getDailyAttendance = async ({ date, status, role, search }) => {
     staffNameTamil: row.name_tamil,
     designation: row.designation,
     staffRole: row.staff_role,
+    phone: row.phone,
+    avatarUrl: row.avatar_url,
     // Backward-compatibility aliases
     designationTamil: row.designation,
     designationEnglish: row.designation,
     roleCategory: (row.staff_role || 'Priest').toLowerCase(),
     status: row.status ? row.status.toLowerCase() : 'not_marked',
+    isLeave: row.status ? row.status.toLowerCase() === 'leave' : false,
     submissionTime: displayTime(row.submission_time),
     remarks: row.remarks,
     updatedAt: row.updated_at ? dateIso(row.updated_at) : null,
@@ -355,6 +447,7 @@ const getDailyAttendance = async ({ date, status, role, search }) => {
     totalStaff: formatted.length,
     presentCount: formatted.filter((row) => row.status === 'present').length,
     absentCount: formatted.filter((row) => row.status === 'absent').length,
+    leaveCount: formatted.filter((row) => row.status === 'leave').length,
     notMarkedCount: formatted.filter((row) => row.status === 'not_marked').length
   };
   const records = formatted.filter((row) =>
@@ -376,22 +469,189 @@ const parseTime = (value) => {
   return `${String(hour).padStart(2, '0')}:${match[2]}:00`;
 };
 
+const getCurrentTimeKolkata = () => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+
+  const hour = parts.find((p) => p.type === 'hour')?.value || '00';
+  const minute = parts.find((p) => p.type === 'minute')?.value || '00';
+  const second = parts.find((p) => p.type === 'second')?.value || '00';
+  return `${hour}:${minute}:${second}`;
+};
+
 const updateAttendance = async (input, updatedBy) => {
+  const todayKolkata = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  if (input.dateKey > todayKolkata && input.status.toLowerCase() !== 'leave') {
+    throw ApiError.badRequest('Future dates can only be marked as Leave.');
+  }
+
+  const staff = await projectModel.getStaffById(input.staffId);
+  if (!staff) throw ApiError.notFound('Staff member not found.');
+  const targetId = staff.id;
+
+  const existingRecord = await projectModel.getAttendanceByStaffAndDate(targetId, input.dateKey);
+
+  let finalSubmissionTime = null;
+  const statusUpper = input.status.toUpperCase();
+
+  if (statusUpper === 'PRESENT') {
+    if (input.submissionTime) {
+      finalSubmissionTime = parseTime(input.submissionTime);
+    } else if (existingRecord?.submission_time) {
+      finalSubmissionTime = existingRecord.submission_time;
+    } else {
+      finalSubmissionTime = getCurrentTimeKolkata();
+    }
+  } else {
+    finalSubmissionTime = null;
+  }
+
   const row = await projectModel.upsertAttendance({
-    ...input,
-    status: input.status.toUpperCase(),
-    submissionTime: parseTime(input.submissionTime),
+    staffId: targetId,
+    dateKey: input.dateKey,
+    status: statusUpper,
+    submissionTime: finalSubmissionTime,
+    remarks: input.remarks !== undefined ? input.remarks : (existingRecord ? existingRecord.remarks : null),
     updatedBy
   });
+
   return {
-    recordId: `${input.staffId}_${input.dateKey}`,
-    staffId: String(input.staffId),
+    recordId: `${targetId}_${input.dateKey}`,
+    staffId: String(targetId),
+    staffCode: staff.staff_id,
     dateKey: input.dateKey,
     status: row.status.toLowerCase(),
     submissionTime: displayTime(row.submission_time),
     remarks: row.remarks,
     updatedAt: dateIso(row.updated_at),
     updatedBy: String(updatedBy)
+  };
+};
+
+const getStaffMonthlyAttendance = async (staffIdOrCode, { year, month, monthIndex }) => {
+  const now = new Date();
+  const targetYear = year ? Number(year) : now.getFullYear();
+  let mIndex = 0;
+  if (monthIndex !== undefined && monthIndex !== null && monthIndex !== '') {
+    mIndex = Number(monthIndex);
+  } else if (month) {
+    mIndex = Number(month) - 1;
+  } else {
+    mIndex = now.getMonth();
+  }
+
+  const totalDaysInMonth = new Date(targetYear, mIndex + 1, 0).getDate();
+  const startDate = `${targetYear}-${String(mIndex + 1).padStart(2, '0')}-01`;
+  const endDate = `${targetYear}-${String(mIndex + 1).padStart(2, '0')}-${String(totalDaysInMonth).padStart(2, '0')}`;
+
+  const result = await projectModel.getStaffMonthlyAttendance(staffIdOrCode, startDate, endDate);
+  if (!result || !result.staff) {
+    throw ApiError.notFound('Staff member not found.');
+  }
+
+  const { staff, attendanceRows, leaveRows } = result;
+
+  const recordMap = new Map();
+  for (const att of attendanceRows) {
+    const dKey = String(att.date_key).slice(0, 10);
+    recordMap.set(dKey, att);
+  }
+
+  const approvedLeaveDates = new Set();
+  for (const l of leaveRows) {
+    const start = new Date(l.start_date);
+    const end = new Date(l.end_date);
+    for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
+      approvedLeaveDates.add(cur.toISOString().slice(0, 10));
+    }
+  }
+
+  let presentCount = 0;
+  let absentCount = 0;
+  let leaveCount = 0;
+  let notMarkedCount = 0;
+
+  const records = [];
+
+  for (let day = 1; day <= totalDaysInMonth; day++) {
+    const dKey = `${targetYear}-${String(mIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const existing = recordMap.get(dKey);
+
+    let status = 'not_marked';
+    let submissionTime = null;
+    let remarks = null;
+    let updatedAt = null;
+    let updatedBy = null;
+    let isLeave = false;
+
+    if (existing) {
+      status = existing.status.toLowerCase();
+      submissionTime = displayTime(existing.submission_time);
+      remarks = existing.remarks;
+      updatedAt = existing.updated_at ? dateIso(existing.updated_at) : null;
+      updatedBy = existing.updater_name || null;
+      if (status === 'leave') isLeave = true;
+    } else if (approvedLeaveDates.has(dKey)) {
+      status = 'leave';
+      isLeave = true;
+      remarks = 'அங்கீகரிக்கப்பட்ட விடுப்பு (Approved Leave)';
+    }
+
+    if (status === 'present') presentCount++;
+    else if (status === 'absent') absentCount++;
+    else if (status === 'leave') leaveCount++;
+    else notMarkedCount++;
+
+    records.push({
+      id: `${staff.id}_${dKey}`,
+      staffId: String(staff.id),
+      dateKey: dKey,
+      dayNumber: day,
+      status,
+      submissionTime,
+      remarks,
+      isLeave,
+      updatedAt,
+      updatedBy
+    });
+  }
+
+  const markedDaysCount = presentCount + absentCount + leaveCount;
+  const attendancePercentage = markedDaysCount > 0
+    ? Math.round((presentCount / markedDaysCount) * 100)
+    : 0;
+
+  return {
+    staff: {
+      id: String(staff.id),
+      staffId: staff.staff_id,
+      staffCode: staff.staff_id,
+      nameEnglish: staff.name_english,
+      nameTamil: staff.name_tamil,
+      designation: staff.designation,
+      designationEnglish: staff.designation,
+      designationTamil: staff.designation,
+      staffRole: staff.staff_role,
+      roleCategory: (staff.staff_role || 'Priest').toLowerCase(),
+      phone: staff.phone,
+      avatarUrl: staff.avatar_url,
+      status: staff.status
+    },
+    year: targetYear,
+    monthIndex: mIndex,
+    totalDaysInMonth,
+    markedDaysCount,
+    presentCount,
+    absentCount,
+    leaveCount,
+    notMarkedCount,
+    attendancePercentage,
+    records
   };
 };
 
@@ -677,6 +937,7 @@ module.exports = {
   updateStaff,
   getDailyAttendance,
   updateAttendance,
+  getStaffMonthlyAttendance,
   submitAttendance,
   getLeaveRequests,
   applyLeave,
