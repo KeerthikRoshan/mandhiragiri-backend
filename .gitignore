@@ -8,6 +8,11 @@ node_modules/
 *.pem
 *.key
 
+# Firebase credentials
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+serviceAccountKey.json
+
 # Logs
 logs/
 *.log

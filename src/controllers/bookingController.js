@@ -84,6 +84,21 @@ const listEventTypes = asyncHandler(async (req, res) => {
   }, 200);
 });
 
+const getFinancialAuditSummary = asyncHandler(async (req, res) => {
+  const result = await bookingService.getFinancialAuditSummary(req.query);
+  return sendSuccess(res, 'Financial audit summary retrieved successfully.', result, 200);
+});
+
+const getPriestSettlements = asyncHandler(async (req, res) => {
+  const result = await bookingService.getPriestSettlements(req.query);
+  return sendSuccess(res, 'Priest compensation settlements retrieved successfully.', result, 200);
+});
+
+const getFinancialAuditTransactions = asyncHandler(async (req, res) => {
+  const result = await bookingService.getFinancialAuditTransactions(req.query);
+  return sendSuccess(res, 'Financial audit transactions retrieved successfully.', result, 200);
+});
+
 module.exports = {
   createBooking,
   listBookings,
@@ -95,5 +110,8 @@ module.exports = {
   getPriestBookings,
   recordPayment,
   getBookingPayments,
-  listEventTypes
+  listEventTypes,
+  getFinancialAuditSummary,
+  getPriestSettlements,
+  getFinancialAuditTransactions
 };

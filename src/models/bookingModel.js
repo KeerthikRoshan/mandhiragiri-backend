@@ -461,12 +461,12 @@ const updateBooking = async (id, updateData) => {
         event_type_id = COALESCE(?, event_type_id),
         client_name = COALESCE(?, client_name),
         client_phone = COALESCE(?, client_phone),
-        alternate_phone = COALESCE(?, alternate_phone),
+        alternate_phone = ?,
         location = COALESCE(?, location),
         venue_type = COALESCE(?, venue_type),
-        address = COALESCE(?, address),
-        area = COALESCE(?, area),
-        pincode = COALESCE(?, pincode),
+        address = ?,
+        area = ?,
+        pincode = ?,
         category = COALESCE(?, category),
         category_label_tamil = COALESCE(?, category_label_tamil),
         date_key = COALESCE(?, date_key),
@@ -478,41 +478,47 @@ const updateBooking = async (id, updateData) => {
         priest_name = COALESCE(?, priest_name),
         priest_phone = COALESCE(?, priest_phone),
         samagri_by = COALESCE(?, samagri_by),
-        notes = COALESCE(?, notes),
+        notes = ?,
         status = COALESCE(?, status),
+        client_advance_amount = COALESCE(?, client_advance_amount),
         total_event_charge = ?,
         client_total_received = ?,
         client_payment_status = ?,
         priest_total_pay = ?,
         priest_advance_paid = ?,
-        priest_payment_status = ?
+        priest_payment_status = ?,
+        updated_at = NOW()
       WHERE id = ?;
     `;
 
+    const clientAdvance = updateData.clientAdvanceAmount !== undefined ? Number(updateData.clientAdvanceAmount) : null;
+    const clientPhone = updateData.clientPhone || updateData.phone || null;
+
     const values = [
-      updateData.title,
-      updateData.eventTypeId,
-      updateData.clientName,
-      updateData.phone,
-      updateData.alternatePhone,
-      updateData.location,
-      updateData.venueType,
-      updateData.address,
-      updateData.area,
-      updateData.pincode,
-      updateData.category,
-      updateData.categoryLabelTamil,
-      updateData.dateKey,
-      updateData.startTime24,
-      updateData.endTime24,
-      updateData.durationMinutes,
-      updateData.timeSlot,
+      updateData.title ?? null,
+      updateData.eventTypeId ?? null,
+      updateData.clientName ?? null,
+      clientPhone,
+      updateData.alternatePhone !== undefined ? updateData.alternatePhone : current.alternate_phone,
+      updateData.location ?? null,
+      updateData.venueType ?? null,
+      updateData.address !== undefined ? updateData.address : current.address,
+      updateData.area !== undefined ? updateData.area : current.area,
+      updateData.pincode !== undefined ? updateData.pincode : current.pincode,
+      updateData.category ?? null,
+      updateData.categoryLabelTamil ?? null,
+      updateData.dateKey ?? null,
+      updateData.startTime24 ?? null,
+      updateData.endTime24 ?? null,
+      updateData.durationMinutes ?? null,
+      updateData.timeSlot ?? null,
       updateData.priestId ? String(updateData.priestId) : null,
-      updateData.priestName,
-      updateData.priestPhone,
-      updateData.samagriBy,
-      updateData.notes,
-      updateData.status,
+      updateData.priestName ?? null,
+      updateData.priestPhone ?? null,
+      updateData.samagriBy ?? null,
+      updateData.notes !== undefined ? updateData.notes : current.notes,
+      updateData.status ?? null,
+      clientAdvance,
       clientTotal,
       clientRecv,
       clientStatus,
@@ -529,11 +535,21 @@ const updateBooking = async (id, updateData) => {
       await connection.execute('DELETE FROM booking_priests WHERE booking_id = ?', [id]);
       for (let i = 0; i < updateData.priestIds.length; i++) {
         const pIdStr = String(updateData.priestIds[i]);
-        if (/^\d+$/.test(pIdStr)) {
+        let staffNumericId = /^\d+$/.test(pIdStr) ? parseInt(pIdStr, 10) : null;
+        if (!staffNumericId) {
+          const [sRows] = await connection.execute(
+            'SELECT id FROM staff WHERE id = ? OR staff_id = ? LIMIT 1;',
+            [pIdStr, pIdStr]
+          );
+          if (sRows && sRows[0] && sRows[0].id) {
+            staffNumericId = parseInt(String(sRows[0].id), 10);
+          }
+        }
+        if (staffNumericId) {
           await connection.execute(`
             INSERT INTO booking_priests (booking_id, staff_id, is_primary, priest_pay, advance_paid)
             VALUES (?, ?, ?, ?, ?);
-          `, [id, parseInt(pIdStr, 10), i === 0 ? 1 : 0, i === 0 ? priestTotal : 0, i === 0 ? priestPaid : 0]);
+          `, [id, staffNumericId, i === 0 ? 1 : 0, i === 0 ? priestTotal : 0, i === 0 ? priestPaid : 0]);
         }
       }
     }
@@ -709,6 +725,269 @@ const listEventTypes = async () => {
   return rows;
 };
 
+/**
+ * Aggregates overall financial audit totals and breakdown counts.
+ */
+const getFinancialAuditSummary = async (filters = {}) => {
+  let where = ['is_deleted = 0'];
+  const params = [];
+
+  if (filters.fromDate && filters.toDate) {
+    where.push('date_key BETWEEN ? AND ?');
+    params.push(filters.fromDate, filters.toDate);
+  } else if (filters.fromDate) {
+    where.push('date_key >= ?');
+    params.push(filters.fromDate);
+  } else if (filters.toDate) {
+    where.push('date_key <= ?');
+    params.push(filters.toDate);
+  } else if (filters.date) {
+    where.push('date_key = ?');
+    params.push(filters.date);
+  } else if (filters.month) {
+    where.push('DATE_FORMAT(date_key, "%Y-%m") = ?');
+    params.push(filters.month);
+  }
+
+  const query = `
+    SELECT
+      COUNT(*) AS total_bookings,
+      COALESCE(SUM(total_event_charge), 0) AS total_billed,
+      COALESCE(SUM(client_total_received), 0) AS total_collected,
+      COALESCE(SUM(total_event_charge - client_total_received), 0) AS client_outstanding,
+      COALESCE(SUM(priest_total_pay), 0) AS priest_total_due,
+      COALESCE(SUM(priest_advance_paid), 0) AS priest_settled,
+      COALESCE(SUM(priest_total_pay - priest_advance_paid), 0) AS priest_pending_settlement,
+      COUNT(CASE WHEN client_payment_status = 'paid' THEN 1 END) AS fully_paid_count,
+      COUNT(CASE WHEN client_payment_status = 'partial' THEN 1 END) AS partial_paid_count,
+      COUNT(CASE WHEN client_payment_status = 'pending' THEN 1 END) AS pending_paid_count,
+      COUNT(CASE WHEN priest_payment_status = 'paid' THEN 1 END) AS priest_settled_count,
+      COUNT(CASE WHEN priest_payment_status != 'paid' AND (priest_total_pay - priest_advance_paid) > 0 THEN 1 END) AS priest_pending_count
+    FROM bookings
+    WHERE ${where.join(' AND ')};
+  `;
+
+  const [rows] = await pool.query(query, params);
+  const row = rows[0] || {};
+
+  const totalBilled = Number(row.total_billed || 0);
+  const totalCollected = Number(row.total_collected || 0);
+  const clientOutstanding = Number((totalBilled - totalCollected).toFixed(2));
+  const priestTotalDue = Number(row.priest_total_due || 0);
+  const priestSettled = Number(row.priest_settled || 0);
+  const priestPendingSettlement = Number((priestTotalDue - priestSettled).toFixed(2));
+  const netPeedamMargin = Number((totalCollected - priestSettled).toFixed(2));
+
+  return {
+    totalBookings: Number(row.total_bookings || 0),
+    totalBilled,
+    totalCollected,
+    clientOutstanding,
+    priestTotalDue,
+    priestSettled,
+    priestPendingSettlement,
+    netPeedamMargin,
+    fullyPaidCount: Number(row.fully_paid_count || 0),
+    partialPaidCount: Number(row.partial_paid_count || 0),
+    pendingPaidCount: Number(row.pending_paid_count || 0),
+    priestSettledCount: Number(row.priest_settled_count || 0),
+    priestPendingCount: Number(row.priest_pending_count || 0)
+  };
+};
+
+/**
+ * Lists bookings with outstanding client balances (Client Receivables).
+ */
+const getClientReceivables = async (filters = {}) => {
+  let where = ['b.is_deleted = 0', 'b.total_event_charge > b.client_total_received'];
+  const params = [];
+
+  if (filters.fromDate && filters.toDate) {
+    where.push('b.date_key BETWEEN ? AND ?');
+    params.push(filters.fromDate, filters.toDate);
+  } else if (filters.fromDate) {
+    where.push('b.date_key >= ?');
+    params.push(filters.fromDate);
+  } else if (filters.toDate) {
+    where.push('b.date_key <= ?');
+    params.push(filters.toDate);
+  } else if (filters.search) {
+    const term = `%${String(filters.search).trim()}%`;
+    where.push('(b.client_name LIKE ? OR b.client_phone LIKE ? OR b.booking_number LIKE ?)');
+    params.push(term, term, term);
+  }
+
+  const query = `
+    SELECT
+      b.id,
+      b.booking_number,
+      CAST(b.date_key AS CHAR) AS date_key,
+      b.title,
+      b.client_name,
+      b.client_phone,
+      b.location,
+      b.priest_name,
+      b.total_event_charge,
+      b.client_advance_amount,
+      b.client_total_received,
+      (b.total_event_charge - b.client_total_received) AS client_balance,
+      b.client_payment_status,
+      b.status
+    FROM bookings b
+    WHERE ${where.join(' AND ')}
+    ORDER BY client_balance DESC, b.date_key ASC;
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows.map(r => ({
+    id: String(r.id),
+    bookingNumber: r.booking_number,
+    dateKey: r.date_key,
+    title: r.title,
+    clientName: r.client_name,
+    clientPhone: r.client_phone,
+    location: r.location,
+    priestName: r.priest_name,
+    totalEventCharge: Number(r.total_event_charge),
+    clientAdvanceAmount: Number(r.client_advance_amount),
+    clientTotalReceived: Number(r.client_total_received),
+    clientBalanceAmount: Number(r.client_balance),
+    clientPaymentStatus: r.client_payment_status,
+    status: r.status
+  }));
+};
+
+/**
+ * Summarizes priest compensation and settlement balances.
+ */
+const getPriestSettlements = async (filters = {}) => {
+  let where = ['b.is_deleted = 0'];
+  const params = [];
+
+  if (filters.fromDate && filters.toDate) {
+    where.push('b.date_key BETWEEN ? AND ?');
+    params.push(filters.fromDate, filters.toDate);
+  } else if (filters.fromDate) {
+    where.push('b.date_key >= ?');
+    params.push(filters.fromDate);
+  } else if (filters.toDate) {
+    where.push('b.date_key <= ?');
+    params.push(filters.toDate);
+  }
+
+  const query = `
+    SELECT
+      b.priest_id,
+      b.priest_name,
+      s.name_tamil AS staff_name_tamil,
+      s.name_english AS staff_name_english,
+      s.phone AS staff_phone,
+      s.staff_role,
+      COUNT(b.id) AS booking_count,
+      COALESCE(SUM(b.priest_total_pay), 0) AS total_pay,
+      COALESCE(SUM(b.priest_advance_paid), 0) AS advance_paid,
+      COALESCE(SUM(b.priest_total_pay - b.priest_advance_paid), 0) AS balance_due
+    FROM bookings b
+    LEFT JOIN staff s ON (s.id = CAST(b.priest_id AS UNSIGNED) AND b.priest_id REGEXP '^[0-9]+$')
+    WHERE ${where.join(' AND ')}
+    GROUP BY b.priest_id, b.priest_name, s.name_tamil, s.name_english, s.phone, s.staff_role
+    ORDER BY balance_due DESC, total_pay DESC;
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows.map(r => ({
+    priestId: String(r.priest_id),
+    priestName: r.staff_name_english || r.priest_name || 'சுவாமி',
+    priestNameTamil: r.staff_name_tamil || r.priest_name || 'சுவாமி',
+    phone: r.staff_phone || null,
+    staffRole: r.staff_role || 'priest',
+    bookingCount: Number(r.booking_count),
+    totalPay: Number(r.total_pay),
+    advancePaid: Number(r.advance_paid),
+    balanceDue: Number(r.balance_due),
+    settlementStatus: Number(r.balance_due) <= 0 && Number(r.total_pay) > 0 ? 'settled' : (Number(r.advance_paid) > 0 ? 'partial' : 'pending')
+  }));
+};
+
+/**
+ * Retrieves the unified cash and transaction ledger for financial audit.
+ */
+const getFinancialAuditTransactions = async (filters = {}) => {
+  let where = ['b.is_deleted = 0'];
+  const params = [];
+
+  if (filters.party) {
+    where.push('bt.party = ?');
+    params.push(String(filters.party).toUpperCase());
+  }
+
+  if (filters.fromDate && filters.toDate) {
+    where.push('DATE(bt.paid_at) BETWEEN ? AND ?');
+    params.push(filters.fromDate, filters.toDate);
+  } else if (filters.fromDate) {
+    where.push('DATE(bt.paid_at) >= ?');
+    params.push(filters.fromDate);
+  } else if (filters.toDate) {
+    where.push('DATE(bt.paid_at) <= ?');
+    params.push(filters.toDate);
+  }
+
+  if (filters.search) {
+    const term = `%${String(filters.search).trim()}%`;
+    where.push('(b.booking_number LIKE ? OR b.client_name LIKE ? OR s.name_tamil LIKE ? OR s.name_english LIKE ?)');
+    params.push(term, term, term, term);
+  }
+
+  const limit = Math.min(parseInt(filters.limit, 10) || 50, 200);
+
+  const query = `
+    SELECT
+      bt.id,
+      bt.booking_id,
+      b.booking_number,
+      b.title,
+      b.client_name,
+      bt.staff_id,
+      s.name_tamil AS staff_name_tamil,
+      s.name_english AS staff_name_english,
+      bt.party,
+      bt.amount,
+      bt.payment_method,
+      bt.transaction_type,
+      bt.reference,
+      bt.notes,
+      bt.paid_at,
+      u.name AS created_by_name
+    FROM booking_transactions bt
+    JOIN bookings b ON b.id = bt.booking_id
+    LEFT JOIN staff s ON s.id = bt.staff_id
+    LEFT JOIN users u ON u.id = bt.created_by
+    WHERE ${where.join(' AND ')}
+    ORDER BY bt.paid_at DESC, bt.id DESC
+    LIMIT ${limit};
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows.map(r => ({
+    id: String(r.id),
+    bookingId: String(r.booking_id),
+    bookingNumber: r.booking_number,
+    title: r.title,
+    clientName: r.client_name,
+    staffId: r.staff_id ? String(r.staff_id) : null,
+    staffName: r.staff_name_english || r.staff_name_tamil || null,
+    staffNameTamil: r.staff_name_tamil || null,
+    party: r.party.toLowerCase(),
+    amount: Number(r.amount),
+    paymentMethod: r.payment_method,
+    transactionType: r.transaction_type,
+    reference: r.reference,
+    notes: r.notes,
+    paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
+    createdByName: r.created_by_name || null
+  }));
+};
+
 module.exports = {
   findConflicts,
   createBooking,
@@ -718,5 +997,9 @@ module.exports = {
   deleteBooking,
   recordPayment,
   listBookingPayments,
-  listEventTypes
+  listEventTypes,
+  getFinancialAuditSummary,
+  getClientReceivables,
+  getPriestSettlements,
+  getFinancialAuditTransactions
 };

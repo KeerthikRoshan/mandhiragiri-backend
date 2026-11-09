@@ -254,17 +254,152 @@ const getBookingBalance = async (id) => {
 };
 
 /**
- * Update existing booking.
+ * Update existing booking with strict 24-hour edit restriction.
  */
 const updateBooking = async (id, input, updatedBy) => {
+  const existing = await bookingModel.getBookingById(id);
+  if (!existing) {
+    throw ApiError.notFound('Booking not found.');
+  }
+
+  // 1. Prohibit editing completed or cancelled bookings
+  if (existing.status === 'completed' || existing.status === 'cancelled') {
+    throw ApiError.forbidden('முடிவுற்ற அல்லது ரத்து செய்யப்பட்ட பதிவுகளை திருத்த முடியாது (Completed or cancelled bookings cannot be edited).');
+  }
+
+  // 2. Strict 24-Hour Edit Restriction:
+  // Must be MORE THAN 24 HOURS in the future.
+  // Prohibit:
+  // - Bookings scheduled within the next 24 hours.
+  // - All bookings scheduled for today.
+  // - Currently running / LIVE bookings.
+  // - Past bookings.
+  const dateKey = existing.date_key; // Format: 'YYYY-MM-DD'
+  const startTime = existing.start_time || '00:00:00'; // Format: 'HH:MM:SS' or 'HH:MM'
+
+  if (dateKey) {
+    const [year, month, day] = String(dateKey).split('-').map(Number);
+    const totalMins = parseTimeToMinutes(startTime) || 0;
+    const eventStart = new Date(year, month - 1, day, Math.floor(totalMins / 60), totalMins % 60, 0);
+
+    const now = new Date();
+    const diffHours = (eventStart.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const bookingDay = new Date(year, month - 1, day, 0, 0, 0);
+
+    if (bookingDay.getTime() <= todayStart.getTime() || diffHours <= 24) {
+      throw ApiError.forbidden('நிகழ்விற்கு 24 மணி நேரத்திற்கு முன்பு மட்டுமே திருத்த முடியும் (Editing is available only 24 hours before the event).');
+    }
+  }
+
   let updateData = { ...input };
 
-  if (input.startTime && input.durationMinutes) {
-    const timings = calculateBookingTimings(input.startTime, input.durationMinutes);
+  // Normalize date
+  if (input.dateKey || input.date || input.booking_date) {
+    updateData.dateKey = input.dateKey || input.date || input.booking_date;
+  }
+
+  // Normalize timing
+  const startTimeInput = input.startTime || input.start_time;
+  const durationInput = input.durationMinutes !== undefined ? input.durationMinutes : input.duration_minutes;
+
+  if (startTimeInput) {
+    const duration = durationInput !== undefined ? durationInput : (existing.duration_minutes || 60);
+    const timings = calculateBookingTimings(startTimeInput, duration);
     updateData.startTime24 = timings.startTime24;
     updateData.endTime24 = timings.endTime24;
     updateData.durationMinutes = timings.durationMinutes;
     updateData.timeSlot = timings.timeSlot;
+  } else if (durationInput !== undefined && existing.start_time) {
+    const existingStart12 = minutesTo12(parseTimeToMinutes(existing.start_time));
+    const timings = calculateBookingTimings(existingStart12, durationInput);
+    updateData.startTime24 = timings.startTime24;
+    updateData.endTime24 = timings.endTime24;
+    updateData.durationMinutes = timings.durationMinutes;
+    updateData.timeSlot = timings.timeSlot;
+  }
+
+  // Normalize text fields
+  if (input.title) {
+    updateData.title = String(input.title).trim();
+  }
+  if (input.clientName || input.client_name) {
+    updateData.clientName = String(input.clientName || input.client_name).trim();
+  }
+  const phoneVal = input.phone || input.clientPhone || input.client_phone || input.mobileNumber;
+  if (phoneVal) {
+    updateData.phone = String(phoneVal).trim();
+    updateData.clientPhone = updateData.phone;
+  }
+  if (input.alternatePhone !== undefined || input.alternate_phone !== undefined) {
+    const alt = input.alternatePhone !== undefined ? input.alternatePhone : input.alternate_phone;
+    updateData.alternatePhone = alt ? String(alt).trim() : null;
+  }
+  if (input.location) {
+    updateData.location = String(input.location).trim();
+  }
+  if (input.address !== undefined) {
+    updateData.address = input.address ? String(input.address).trim() : null;
+  }
+  if (input.area !== undefined) {
+    updateData.area = input.area ? String(input.area).trim() : null;
+  }
+  if (input.pincode !== undefined) {
+    updateData.pincode = input.pincode ? String(input.pincode).trim() : null;
+  }
+  if (input.category) {
+    updateData.category = input.category;
+  }
+  if (input.categoryLabelTamil || input.category_label_tamil) {
+    updateData.categoryLabelTamil = input.categoryLabelTamil || input.category_label_tamil;
+  }
+  if (input.venueType || input.venue_type) {
+    updateData.venueType = input.venueType || input.venue_type;
+  }
+  if (input.samagriBy || input.samagri_by) {
+    updateData.samagriBy = input.samagriBy || input.samagri_by;
+  }
+  if (input.notes !== undefined) {
+    updateData.notes = input.notes ? String(input.notes).trim() : null;
+  }
+  if (input.eventTypeId !== undefined || input.event_type_id !== undefined) {
+    updateData.eventTypeId = input.eventTypeId || input.event_type_id || null;
+  }
+
+  // Normalize priest info
+  const rawPriests = input.priestId || input.priest_id || input.priestIds || input.priest_ids;
+  if (rawPriests) {
+    const pId = Array.isArray(rawPriests) ? String(rawPriests[0]) : String(rawPriests);
+    const staff = await projectModel.getStaffById(pId);
+    if (staff) {
+      updateData.priestId = String(staff.staff_id || staff.id);
+      updateData.priestName = staff.name_tamil || staff.name_english;
+      updateData.priestPhone = staff.phone || null;
+      updateData.priestIds = [String(staff.id)];
+    } else {
+      updateData.priestId = pId;
+      updateData.priestName = input.priestName || input.priest_name || existing.priest_name;
+      updateData.priestPhone = input.priestPhone || input.priest_phone || existing.priest_phone;
+      updateData.priestIds = [pId];
+    }
+  }
+
+  // Financials
+  if (input.totalEventCharge !== undefined || input.total_event_charge !== undefined) {
+    updateData.totalEventCharge = Number(input.totalEventCharge !== undefined ? input.totalEventCharge : input.total_event_charge) || 0;
+  }
+  if (input.clientAdvanceAmount !== undefined || input.client_advance_amount !== undefined) {
+    updateData.clientAdvanceAmount = Number(input.clientAdvanceAmount !== undefined ? input.clientAdvanceAmount : input.client_advance_amount) || 0;
+  }
+  if (input.clientTotalReceived !== undefined || input.client_total_received !== undefined) {
+    updateData.clientTotalReceived = Number(input.clientTotalReceived !== undefined ? input.clientTotalReceived : input.client_total_received) || 0;
+  }
+  if (input.priestTotalPay !== undefined || input.priest_total_pay !== undefined) {
+    updateData.priestTotalPay = Number(input.priestTotalPay !== undefined ? input.priestTotalPay : input.priest_total_pay) || 0;
+  }
+  if (input.priestAdvancePaid !== undefined || input.priest_advance_paid !== undefined) {
+    updateData.priestAdvancePaid = Number(input.priestAdvancePaid !== undefined ? input.priestAdvancePaid : input.priest_advance_paid) || 0;
   }
 
   await bookingModel.updateBooking(id, updateData);
@@ -357,6 +492,41 @@ const listEventTypes = async () => {
   }));
 };
 
+/**
+ * Get comprehensive financial audit summary and outstanding client receivables.
+ */
+const getFinancialAuditSummary = async (filters = {}) => {
+  const summary = await bookingModel.getFinancialAuditSummary(filters);
+  const receivables = await bookingModel.getClientReceivables(filters);
+  return {
+    summary,
+    receivables,
+    count: receivables.length
+  };
+};
+
+/**
+ * Get priest compensation and pending settlement status.
+ */
+const getPriestSettlements = async (filters = {}) => {
+  const settlements = await bookingModel.getPriestSettlements(filters);
+  return {
+    settlements,
+    count: settlements.length
+  };
+};
+
+/**
+ * Get financial audit transaction ledger.
+ */
+const getFinancialAuditTransactions = async (filters = {}) => {
+  const transactions = await bookingModel.getFinancialAuditTransactions(filters);
+  return {
+    transactions,
+    count: transactions.length
+  };
+};
+
 module.exports = {
   checkAvailability,
   createBooking,
@@ -367,5 +537,8 @@ module.exports = {
   deleteBooking,
   recordPayment,
   getBookingPayments,
-  listEventTypes
+  listEventTypes,
+  getFinancialAuditSummary,
+  getPriestSettlements,
+  getFinancialAuditTransactions
 };

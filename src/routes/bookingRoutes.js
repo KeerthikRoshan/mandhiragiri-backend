@@ -2,6 +2,7 @@ const express = require('express');
 const bookingController = require('../controllers/bookingController');
 const {
   validateBooking,
+  validateUpdateBooking,
   validateBookingId,
   validateAvailability,
   validatePayment
@@ -29,13 +30,18 @@ router.get('/date/:date', ...adminOnly, (req, res, next) => {
 });
 router.get('/priest/:priestId', ...adminOnly, bookingController.getPriestBookings);
 
-// 5. Booking Details, Update, Delete & Financials
+// 5. Financial Audits & Settlement Endpoints
+router.get('/financial-audits/summary', ...adminOnly, bookingController.getFinancialAuditSummary);
+router.get('/financial-audits/settlements', ...adminOnly, bookingController.getPriestSettlements);
+router.get('/financial-audits/transactions', ...adminOnly, bookingController.getFinancialAuditTransactions);
+
+// 6. Booking Details, Update, Delete & Financials
 router.get('/:bookingId', ...adminOnly, validateBookingId, bookingController.getBookingDetails);
-router.put('/:bookingId', ...adminOnly, validateBookingId, bookingController.updateBooking);
+router.put('/:bookingId', ...adminOnly, validateBookingId, validateUpdateBooking, bookingController.updateBooking);
 router.delete('/:bookingId', ...adminOnly, validateBookingId, bookingController.deleteBooking);
 router.get('/:bookingId/balance', ...adminOnly, validateBookingId, bookingController.getBookingBalance);
 
-// 6. Manual Cash Payments & Transactions
+// 7. Manual Cash Payments & Transactions
 router.post('/:bookingId/payments', ...adminOnly, validateBookingId, validatePayment, bookingController.recordPayment);
 router.get('/:bookingId/payments', ...adminOnly, validateBookingId, bookingController.getBookingPayments);
 
