@@ -5,9 +5,52 @@ const {
   validateNotificationId,
   validateUpdatePreferences
 } = require('../validators/notificationValidator');
-const { authenticate } = require('../middleware/authMiddleware');
+const { authenticate, authorizeRoles } = require('../middleware/authMiddleware');
 
 const router = express.Router();
+
+const adminOnly = [authenticate, authorizeRoles('SUPER_ADMIN', 'ADMIN')];
+
+/**
+ * @route   GET /api/v1/notifications/admin/queue-health
+ * @route   GET /api/v1/notifications/admin/diagnostics
+ * @desc    Get notification queue and worker heartbeat health metrics & FCM diagnostics
+ * @access  Private (Admin / Super Admin only)
+ */
+router.get(
+  '/admin/queue-health',
+  adminOnly,
+  notificationController.getQueueHealth
+);
+
+router.get(
+  '/admin/diagnostics',
+  adminOnly,
+  notificationController.getQueueHealth
+);
+
+/**
+ * @route   POST /api/v1/notifications/admin/retry-job/:jobId
+ * @desc    Retry failed notification push job
+ * @access  Private (Admin / Super Admin only)
+ */
+router.post(
+  '/admin/retry-job/:jobId',
+  adminOnly,
+  notificationController.retryFailedJob
+);
+
+/**
+ * @route   POST /api/v1/notifications/admin/retry-outbox/:eventId
+ * @desc    Retry failed notification outbox event
+ * @access  Private (Admin / Super Admin only)
+ */
+router.post(
+  '/admin/retry-outbox/:eventId',
+  adminOnly,
+  notificationController.retryFailedOutbox
+);
+
 
 /**
  * @route   GET /api/v1/notifications

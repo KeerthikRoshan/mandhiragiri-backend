@@ -22,8 +22,8 @@ const deviceModel = require('../src/models/deviceModel');
 
 describe('Notification Management System Tests (Phase 2)', () => {
   describe('Constants and Idempotency Key Generator', () => {
-    it('contains all 12 core event types', () => {
-      assert.equal(ALL_EVENT_TYPES.length, 12);
+    it('contains all core event types', () => {
+      assert.equal(ALL_EVENT_TYPES.length, 13);
       assert.ok(ALL_EVENT_TYPES.includes('BOOKING_CREATED'));
       assert.ok(ALL_EVENT_TYPES.includes('BOOKING_ASSIGNED'));
       assert.ok(ALL_EVENT_TYPES.includes('BOOKING_RESCHEDULED'));
@@ -34,6 +34,7 @@ describe('Notification Management System Tests (Phase 2)', () => {
       assert.ok(ALL_EVENT_TYPES.includes('LEAVE_APPROVED'));
       assert.ok(ALL_EVENT_TYPES.includes('LEAVE_REJECTED'));
       assert.ok(ALL_EVENT_TYPES.includes('ATTENDANCE_REMINDER'));
+      assert.ok(ALL_EVENT_TYPES.includes('ATTENDANCE_ALERT'));
       assert.ok(ALL_EVENT_TYPES.includes('PAYMENT_UPDATED'));
       assert.ok(ALL_EVENT_TYPES.includes('SYSTEM_ANNOUNCEMENT'));
     });

@@ -297,7 +297,9 @@ module.exports = {
     body('completionNotes').optional({ values: 'null' }).isLength({ max: 2000 })
   ]),
   validateAdminProfile: validate([
-    body('phone').trim().matches(/^\+?[0-9\s-]{10,15}$/),
+    body('nameEnglish').optional().trim().isLength({ min: 1, max: 100 }),
+    body('nameTamil').optional().trim().isLength({ min: 1, max: 150 }),
+    body('phone').optional().trim().matches(/^\+?[0-9\s-]{10,15}$/),
     body('email').optional({ values: 'falsy' }).isEmail(),
     body('addressTamil').optional({ values: 'null' }).isLength({ max: 1000 })
   ]),

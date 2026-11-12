@@ -1,5 +1,8 @@
 const { pool } = require('../config/database');
 const { minutesTo12, minutesTo24, parseTimeToMinutes } = require('../utils/timeUtils');
+const outboxModel = require('./outboxModel');
+const bookingReminderService = require('../services/bookingReminderService');
+const { NOTIFICATION_EVENTS, generateEventIdempotencyKey } = require('../constants/notificationConstants');
 
 /**
  * Find conflicting bookings for specified priests on a given date and time interval.
@@ -61,10 +64,11 @@ const findConflicts = async ({ dateKey, startTime24, endTime24, priestIds = [], 
  * Creates a new booking with priest assignments and initial cash advance transactions
  * inside a database transaction.
  */
-const createBooking = async (booking) => {
-  const connection = await pool.getConnection();
+const createBooking = async (booking, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
   try {
-    await connection.beginTransaction();
+    if (!isExternalConn) await connection.beginTransaction();
 
     // 1. Transactional conflict check (locking existing bookings on date)
     const priestIdsToCheck = booking.priestIds && booking.priestIds.length > 0
@@ -101,8 +105,8 @@ const createBooking = async (booking) => {
         time_slot, priest_id, priest_name, priest_phone, samagri_by, notes,
         total_event_charge, client_advance_amount, client_total_received,
         client_payment_status, priest_total_pay, priest_advance_paid,
-        priest_payment_status, created_by, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        priest_payment_status, created_by, status, schedule_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1);
     `;
 
     const clientTotal = Number(booking.totalEventCharge || 0);
@@ -132,7 +136,7 @@ const createBooking = async (booking) => {
       booking.endTime24,
       booking.durationMinutes || 60,
       booking.timeSlot,
-      String(booking.priestId),
+      booking.priestId && booking.priestId !== 'null' && booking.priestId !== 'undefined' ? String(booking.priestId) : null,
       booking.priestName,
       booking.priestPhone || null,
       booking.samagriBy || 'customer',
@@ -154,13 +158,18 @@ const createBooking = async (booking) => {
     // 3. Insert into booking_priests mapping table
     for (let i = 0; i < priestIdsToCheck.length; i++) {
       const pIdStr = String(priestIdsToCheck[i]);
+      if (!pIdStr || pIdStr === 'null' || pIdStr === 'undefined') continue;
       const isPrimary = i === 0 ? 1 : 0;
-      // Only insert if staff_id is numeric
-      if (/^\d+$/.test(pIdStr)) {
+      let staffNumericId = /^\d+$/.test(pIdStr) ? parseInt(pIdStr, 10) : null;
+      if (!staffNumericId) {
+        const [lookup] = await connection.execute('SELECT id FROM staff WHERE staff_id = ? LIMIT 1;', [pIdStr]);
+        if (lookup[0]) staffNumericId = lookup[0].id;
+      }
+      if (staffNumericId) {
         await connection.execute(`
           INSERT INTO booking_priests (booking_id, staff_id, is_primary, priest_pay, advance_paid)
           VALUES (?, ?, ?, ?, ?);
-        `, [bookingId, parseInt(pIdStr, 10), isPrimary, isPrimary ? priestTotal : 0, isPrimary ? priestPaid : 0]);
+        `, [bookingId, staffNumericId, isPrimary, isPrimary ? priestTotal : 0, isPrimary ? priestPaid : 0]);
       }
     }
 
@@ -182,20 +191,51 @@ const createBooking = async (booking) => {
       `, [bookingId, staffIdVal, priestPaid, booking.createdBy || null]);
     }
 
-    await connection.commit();
+    // 5. Schedule 24H and 1H Booking Reminders (schedule_version = 1)
+    await bookingReminderService.scheduleBookingReminders(connection, {
+      bookingId,
+      dateKey: booking.dateKey,
+      startTime: booking.startTime24,
+      scheduleVersion: 1
+    });
+
+    // 6. Insert Outbox Event: BOOKING_CREATED
+    const eventKey = generateEventIdempotencyKey('BOOKING_CREATED', 'booking', bookingId);
+    await outboxModel.insertEventTx(connection, {
+      eventType: NOTIFICATION_EVENTS.BOOKING_CREATED,
+      entityType: 'booking',
+      entityId: bookingId,
+      eventKey,
+      payload: {
+        bookingId,
+        bookingNumber: booking.bookingNumber,
+        title: booking.title,
+        dateKey: booking.dateKey,
+        startTime: booking.startTime24,
+        endTime: booking.endTime24,
+        timeSlot: booking.timeSlot,
+        priestId: booking.priestId,
+        priestName: booking.priestName,
+        totalEventCharge: clientTotal,
+        clientAdvanceAmount: Number(booking.clientAdvanceAmount || 0)
+      }
+    });
+
+    if (!isExternalConn) await connection.commit();
     return bookingId;
   } catch (error) {
-    await connection.rollback();
+    if (!isExternalConn) await connection.rollback();
     throw error;
   } finally {
-    connection.release();
+    if (!isExternalConn) connection.release();
   }
 };
 
 /**
  * Retrieve booking details by ID including transactions and assigned priests.
  */
-const getBookingById = async (id) => {
+const getBookingById = async (id, connection = null) => {
+  const conn = connection || pool;
   const query = `
     SELECT
       b.id,
@@ -243,13 +283,13 @@ const getBookingById = async (id) => {
     LIMIT 1;
   `;
 
-  const [rows] = await pool.query(query, [id]);
+  const [rows] = await conn.query(query, [id]);
   if (!rows || rows.length === 0) return null;
 
   const row = rows[0];
 
   // Fetch transactions
-  const [transactions] = await pool.query(`
+  const [transactions] = await conn.query(`
     SELECT
       id,
       booking_id,
@@ -269,7 +309,7 @@ const getBookingById = async (id) => {
   `, [id]);
 
   // Fetch assigned priests
-  const [priests] = await pool.query(`
+  const [priests] = await conn.query(`
     SELECT
       bp.id,
       bp.staff_id,
@@ -301,7 +341,12 @@ const getBookingById = async (id) => {
  * List bookings with flexible filtering (date, priest, status, category, search).
  */
 const listBookings = async (filters = {}) => {
-  let whereClauses = ['b.is_deleted = 0'];
+  let whereClauses = [];
+  if (filters.view === 'history' || filters.view === 'past' || filters.status === 'cancelled' || filters.includeDeleted) {
+    whereClauses.push('(b.is_deleted = 0 OR b.status = \'cancelled\')');
+  } else {
+    whereClauses.push('b.is_deleted = 0');
+  }
   const params = [];
 
   if (filters.date || filters.dateKey) {
@@ -318,14 +363,35 @@ const listBookings = async (filters = {}) => {
     params.push(filters.toDate);
   }
 
-  if (filters.priestId) {
+  if (filters.staffId || filters.staffCode) {
+    const sId = filters.staffId ? parseInt(filters.staffId, 10) : 0;
+    const sCode = filters.staffCode ? String(filters.staffCode) : String(sId);
+    whereClauses.push(`(
+      b.priest_id = ? 
+      OR b.priest_id = ?
+      OR b.id IN (SELECT booking_id FROM booking_priests WHERE staff_id = ?)
+    )`);
+    params.push(sCode, String(sId), sId);
+  } else if (filters.priestId) {
     const pIdStr = String(filters.priestId);
-    if (/^\d+$/.test(pIdStr)) {
-      whereClauses.push('(b.priest_id = ? OR b.id IN (SELECT booking_id FROM booking_priests WHERE staff_id = ?))');
-      params.push(pIdStr, parseInt(pIdStr, 10));
-    } else {
-      whereClauses.push('b.priest_id = ?');
-      params.push(pIdStr);
+    whereClauses.push(`(
+      b.priest_id = ? 
+      OR b.priest_id IN (SELECT staff_id FROM staff WHERE id = ? OR staff_id = ?)
+      OR b.id IN (SELECT booking_id FROM booking_priests WHERE staff_id IN (SELECT id FROM staff WHERE id = ? OR staff_id = ?))
+    )`);
+    params.push(pIdStr, pIdStr, pIdStr, pIdStr, pIdStr);
+  }
+
+  if (filters.view) {
+    const view = String(filters.view).toLowerCase();
+    if (view === 'today') {
+      whereClauses.push("b.date_key = CURDATE() AND b.status != 'cancelled'");
+    } else if (view === 'upcoming') {
+      whereClauses.push("b.date_key > CURDATE() AND b.status != 'cancelled'");
+    } else if (view === 'completed') {
+      whereClauses.push("b.status = 'completed'");
+    } else if (view === 'past' || view === 'history') {
+      whereClauses.push("(b.date_key < CURDATE() OR b.status IN ('completed', 'cancelled'))");
     }
   }
 
@@ -392,7 +458,11 @@ const listBookings = async (filters = {}) => {
     FROM bookings b
     LEFT JOIN event_types et ON et.id = b.event_type_id
     WHERE ${whereClauses.join(' AND ')}
-    ORDER BY b.date_key ASC, b.start_time ASC, b.id ASC;
+    ORDER BY ${
+      (filters.view && ['completed', 'past', 'history'].includes(String(filters.view).toLowerCase()))
+        ? 'b.date_key DESC, b.start_time DESC, b.id DESC'
+        : 'b.date_key ASC, b.start_time ASC, b.id ASC'
+    };
   `;
 
   const [rows] = await pool.query(query, params);
@@ -402,10 +472,11 @@ const listBookings = async (filters = {}) => {
 /**
  * Updates a booking with conflict checking.
  */
-const updateBooking = async (id, updateData) => {
-  const connection = await pool.getConnection();
+const updateBooking = async (id, updateData, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
   try {
-    await connection.beginTransaction();
+    if (!isExternalConn) await connection.beginTransaction();
 
     const [existing] = await connection.query(
       'SELECT * FROM bookings WHERE id = ? AND is_deleted = 0 FOR UPDATE',
@@ -447,6 +518,28 @@ const updateBooking = async (id, updateData) => {
       throw err;
     }
 
+    // Determine timing changes
+    const currentDateKeyStr = current.date_key instanceof Date
+      ? current.date_key.toISOString().slice(0, 10)
+      : String(current.date_key).slice(0, 10);
+    const newDateKeyStr = newDateKey instanceof Date
+      ? newDateKey.toISOString().slice(0, 10)
+      : String(newDateKey).slice(0, 10);
+
+    const timingChanged = Boolean(
+      (updateData.dateKey && newDateKeyStr !== currentDateKeyStr) ||
+      (updateData.startTime24 && String(updateData.startTime24).slice(0, 5) !== String(current.start_time).slice(0, 5)) ||
+      (updateData.endTime24 && String(updateData.endTime24).slice(0, 5) !== String(current.end_time).slice(0, 5)) ||
+      (updateData.timeSlot && updateData.timeSlot !== current.time_slot)
+    );
+
+    const currentPriestId = current.priest_id ? String(current.priest_id) : null;
+    const newPriestId = updateData.priestId ? String(updateData.priestId) : (updateData.priestIds ? String(updateData.priestIds[0]) : null);
+    const priestChanged = Boolean(newPriestId && newPriestId !== currentPriestId);
+
+    const currentScheduleVersion = Number(current.schedule_version || 1);
+    const newScheduleVersion = timingChanged ? currentScheduleVersion + 1 : currentScheduleVersion;
+
     const clientTotal = updateData.totalEventCharge !== undefined ? Number(updateData.totalEventCharge) : Number(current.total_event_charge);
     const clientRecv = updateData.clientTotalReceived !== undefined ? Number(updateData.clientTotalReceived) : Number(current.client_total_received);
     const clientStatus = clientRecv >= clientTotal && clientTotal > 0 ? 'paid' : (clientRecv > 0 ? 'partial' : 'pending');
@@ -487,6 +580,7 @@ const updateBooking = async (id, updateData) => {
         priest_total_pay = ?,
         priest_advance_paid = ?,
         priest_payment_status = ?,
+        schedule_version = ?,
         updated_at = NOW()
       WHERE id = ?;
     `;
@@ -525,6 +619,7 @@ const updateBooking = async (id, updateData) => {
       priestTotal,
       priestPaid,
       priestStatus,
+      newScheduleVersion,
       id
     ];
 
@@ -554,36 +649,149 @@ const updateBooking = async (id, updateData) => {
       }
     }
 
-    await connection.commit();
+    // Reminders & Outbox Events:
+    if (timingChanged) {
+      // 1. Invalidate previous pending reminders
+      await bookingReminderService.cancelBookingReminders(connection, {
+        bookingId: id,
+        reason: 'Booking rescheduled'
+      });
+
+      // 2. Schedule reminders with incremented schedule_version
+      await bookingReminderService.scheduleBookingReminders(connection, {
+        bookingId: id,
+        dateKey: newDateKeyStr,
+        startTime: newStartTime24,
+        scheduleVersion: newScheduleVersion
+      });
+
+      // 3. Insert BOOKING_RESCHEDULED outbox event
+      const reschedEventKey = generateEventIdempotencyKey('BOOKING_RESCHEDULED', 'booking', id, `v${newScheduleVersion}`);
+      await outboxModel.insertEventTx(connection, {
+        eventType: NOTIFICATION_EVENTS.BOOKING_RESCHEDULED,
+        entityType: 'booking',
+        entityId: id,
+        eventKey: reschedEventKey,
+        payload: {
+          bookingId: id,
+          bookingNumber: current.booking_number,
+          title: updateData.title || current.title,
+          oldDateKey: currentDateKeyStr,
+          newDateKey: newDateKeyStr,
+          oldStartTime: current.start_time,
+          newStartTime: newStartTime24,
+          timeSlot: updateData.timeSlot || current.time_slot,
+          priestId: newPriestId || current.priest_id,
+          scheduleVersion: newScheduleVersion
+        }
+      });
+    }
+
+    // If priest was assigned/changed, emit BOOKING_ASSIGNED outbox event
+    if (priestChanged) {
+      const assignEventKey = generateEventIdempotencyKey('BOOKING_ASSIGNED', 'booking', id, `priest_${newPriestId}`);
+      await outboxModel.insertEventTx(connection, {
+        eventType: NOTIFICATION_EVENTS.BOOKING_ASSIGNED,
+        entityType: 'booking',
+        entityId: id,
+        eventKey: assignEventKey,
+        payload: {
+          bookingId: id,
+          bookingNumber: current.booking_number,
+          title: updateData.title || current.title,
+          priestId: newPriestId,
+          priestName: updateData.priestName || current.priest_name,
+          dateKey: newDateKeyStr,
+          startTime: newStartTime24,
+          timeSlot: updateData.timeSlot || current.time_slot
+        }
+      });
+    }
+
+    if (!isExternalConn) await connection.commit();
     return true;
   } catch (error) {
-    await connection.rollback();
+    if (!isExternalConn) await connection.rollback();
     throw error;
   } finally {
-    connection.release();
+    if (!isExternalConn) connection.release();
   }
 };
 
 /**
  * Soft deletes a booking.
  */
-const deleteBooking = async (id) => {
-  const [result] = await pool.execute(`
-    UPDATE bookings
-    SET is_deleted = 1, deleted_at = NOW(), status = 'cancelled'
-    WHERE id = ? AND is_deleted = 0;
-  `, [id]);
-  return result.affectedRows > 0;
+const deleteBooking = async (id, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
+  try {
+    if (!isExternalConn) await connection.beginTransaction();
+
+    const [existing] = await connection.query(
+      'SELECT * FROM bookings WHERE id = ? AND is_deleted = 0 FOR UPDATE;',
+      [id]
+    );
+
+    if (!existing || existing.length === 0) {
+      if (!isExternalConn) await connection.commit();
+      return false;
+    }
+
+    const current = existing[0];
+
+    const [result] = await connection.execute(`
+      UPDATE bookings
+      SET is_deleted = 1, deleted_at = NOW(), status = 'cancelled'
+      WHERE id = ? AND is_deleted = 0;
+    `, [id]);
+
+    if (result.affectedRows === 0) {
+      if (!isExternalConn) await connection.commit();
+      return false;
+    }
+
+    // 1. Cancel pending reminder jobs
+    await bookingReminderService.cancelBookingReminders(connection, {
+      bookingId: id,
+      reason: 'Booking cancelled'
+    });
+
+    // 2. Insert outbox event BOOKING_CANCELLED
+    const eventKey = generateEventIdempotencyKey('BOOKING_CANCELLED', 'booking', id);
+    await outboxModel.insertEventTx(connection, {
+      eventType: NOTIFICATION_EVENTS.BOOKING_CANCELLED,
+      entityType: 'booking',
+      entityId: id,
+      eventKey,
+      payload: {
+        bookingId: id,
+        bookingNumber: current.booking_number,
+        title: current.title,
+        dateKey: current.date_key,
+        priestId: current.priest_id,
+        priestName: current.priest_name
+      }
+    });
+
+    if (!isExternalConn) await connection.commit();
+    return true;
+  } catch (error) {
+    if (!isExternalConn) await connection.rollback();
+    throw error;
+  } finally {
+    if (!isExternalConn) connection.release();
+  }
 };
 
 /**
  * Records a subsequent manual cash payment (Customer payment or Priest remuneration)
  * inside a database transaction and updates outstanding balance.
  */
-const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash', notes = null, staffId = null, createdBy = null }) => {
-  const connection = await pool.getConnection();
+const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash', notes = null, staffId = null, createdBy = null }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
   try {
-    await connection.beginTransaction();
+    if (!isExternalConn) await connection.beginTransaction();
 
     const [rows] = await connection.query(
       'SELECT * FROM bookings WHERE id = ? AND is_deleted = 0 FOR UPDATE',
@@ -591,6 +799,7 @@ const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash',
     );
 
     if (!rows || rows.length === 0) {
+      if (!isExternalConn) await connection.rollback();
       return { notFound: true };
     }
 
@@ -614,6 +823,7 @@ const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash',
       const remainingBalance = Number((currentTotal - currentReceived).toFixed(2));
 
       if (payAmount > remainingBalance) {
+        if (!isExternalConn) await connection.rollback();
         return {
           exceedsBalance: true,
           balance: remainingBalance,
@@ -635,6 +845,7 @@ const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash',
       const remainingBalance = Number((currentPay - currentPaid).toFixed(2));
 
       if (payAmount > remainingBalance) {
+        if (!isExternalConn) await connection.rollback();
         return {
           exceedsBalance: true,
           balance: remainingBalance,
@@ -657,11 +868,33 @@ const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash',
       VALUES (?, ?, ?, ?, ?, 'ADDITIONAL_PAYMENT', ?, ?);
     `, [bookingId, staffId || null, party.toUpperCase(), payAmount, paymentMethod, notes || 'கூடுதல் பணம் செலுத்துகை (Additional Cash Payment)', createdBy || null]);
 
-    await connection.commit();
+    const transactionId = res.insertId;
+
+    // Outbox Event: PAYMENT_UPDATED
+    const eventKey = generateEventIdempotencyKey('PAYMENT_UPDATED', 'payment', transactionId);
+    await outboxModel.insertEventTx(connection, {
+      eventType: NOTIFICATION_EVENTS.PAYMENT_UPDATED,
+      entityType: 'payment',
+      entityId: transactionId,
+      eventKey,
+      payload: {
+        bookingId,
+        bookingNumber: booking.booking_number,
+        transactionId,
+        party: party.toUpperCase(),
+        amount: payAmount,
+        paymentMethod,
+        priestId: !isClient ? (staffId || booking.priest_id) : null,
+        staffId: staffId || null,
+        updatedPaymentStatus: newStatus
+      }
+    });
+
+    if (!isExternalConn) await connection.commit();
 
     return {
       success: true,
-      transactionId: res.insertId,
+      transactionId,
       bookingId,
       party: party.toUpperCase(),
       amount: payAmount,
@@ -669,10 +902,10 @@ const recordPayment = async ({ bookingId, party, amount, paymentMethod = 'cash',
       updatedPaymentStatus: newStatus
     };
   } catch (error) {
-    await connection.rollback();
+    if (!isExternalConn) await connection.rollback();
     throw error;
   } finally {
-    connection.release();
+    if (!isExternalConn) connection.release();
   }
 };
 

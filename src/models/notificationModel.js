@@ -354,7 +354,13 @@ const listNotificationsForUser = async (userId, options = {}) => {
   const conditions = ['nr.user_id = ?', 'nr.is_deleted = 0', 'nr.in_app_visible = 1'];
   const params = [userId];
 
-  if (options.unreadOnly) {
+  const isUnreadOnly =
+    options.unreadOnly === true ||
+    options.unreadOnly === 'true' ||
+    options.unreadOnly === 1 ||
+    options.unreadOnly === '1';
+
+  if (isUnreadOnly) {
     conditions.push('nr.read_at IS NULL');
   }
 
@@ -675,6 +681,103 @@ const resolveStaffUserIdByStaffId = async (staffId) => {
   return rows.length > 0 ? rows[0].user_id : null;
 };
 
+/**
+ * Atomically reset a FAILED push job for retry by an administrator
+ *
+ * @param {Object} params
+ * @param {number|string} params.jobId
+ * @param {number|string} params.adminUserId
+ * @param {string} [params.reason]
+ * @returns {Promise<Object>}
+ */
+const retryFailedPushJob = async ({ jobId, adminUserId, reason = '' }) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.execute(
+      `SELECT id, job_type, status, notification_id, recipient_user_id, attempts, last_error 
+       FROM notification_jobs 
+       WHERE id = ? 
+       FOR UPDATE;`,
+      [jobId]
+    );
+
+    if (rows.length === 0) {
+      await connection.rollback();
+      return { success: false, notFound: true };
+    }
+
+    const job = rows[0];
+    if (job.status === 'CANCELLED') {
+      await connection.rollback();
+      return { success: false, isCancelled: true, currentStatus: job.status };
+    }
+    if (job.status !== 'FAILED') {
+      await connection.rollback();
+      return { success: false, invalidStatus: true, currentStatus: job.status };
+    }
+
+    const auditPrefix = `[ADMIN_RETRY by User ${adminUserId} at ${new Date().toISOString()}${reason ? ': ' + reason : ''}]`;
+    const newLastError = `${auditPrefix} Prior error: ${job.last_error || 'None'}`.slice(0, 1000);
+
+    // Reset parent job
+    await connection.execute(
+      `UPDATE notification_jobs
+       SET status = 'PENDING',
+           attempts = 0,
+           scheduled_at = UTC_TIMESTAMP(),
+           lease_token = NULL,
+           lease_expires_at = NULL,
+           last_error = ?,
+           updated_at = UTC_TIMESTAMP()
+       WHERE id = ?;`,
+      [newLastError, jobId]
+    );
+
+    // Reset failed device deliveries for active user devices (preserve SENT deliveries!)
+    const [devUpdateResult] = await connection.execute(
+      `UPDATE notification_device_deliveries dd
+       JOIN user_devices ud ON dd.device_id = ud.id
+       SET dd.status = 'PENDING',
+           dd.attempts = 0,
+           dd.last_error = NULL
+       WHERE dd.job_id = ?
+         AND dd.status = 'FAILED'
+         AND ud.is_active = 1;`,
+      [jobId]
+    );
+
+    // If recipient delivery_status is FAILED, reset to PENDING
+    if (job.notification_id && job.recipient_user_id) {
+      await connection.execute(
+        `UPDATE notification_recipients
+         SET delivery_status = 'PENDING',
+             delivery_error = NULL,
+             updated_at = UTC_TIMESTAMP()
+         WHERE notification_id = ? 
+           AND user_id = ? 
+           AND delivery_status = 'FAILED';`,
+        [job.notification_id, job.recipient_user_id]
+      );
+    }
+
+    await connection.commit();
+    return {
+      success: true,
+      jobId: job.id,
+      previousStatus: job.status,
+      newStatus: 'PENDING',
+      resetDeviceCount: devUpdateResult.affectedRows
+    };
+  } catch (err) {
+    try { await connection.rollback(); } catch (_) {}
+    throw err;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   findNotificationByIdempotencyKey,
   createNotificationTransaction,
@@ -691,5 +794,7 @@ module.exports = {
   resolveActiveAdminUserIds,
   resolveAllActiveStaffUserIds,
   resolveBookingAssignedStaffUserId,
-  resolveStaffUserIdByStaffId
+  resolveStaffUserIdByStaffId,
+  retryFailedPushJob
 };
+

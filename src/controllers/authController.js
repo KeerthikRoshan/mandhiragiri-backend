@@ -19,12 +19,14 @@ const login = asyncHandler(async (req, res) => {
     userAgent
   });
 
+  const maskedMobile = targetMobile
+    ? `${targetMobile.slice(0, 3)}****${targetMobile.slice(-2)}`
+    : 'N/A';
   console.log('\n========================================');
   console.log(`[AUTH LOGIN SUCCESS]`);
   console.log(`User: ${result.data.user?.nameEnglish || result.data.user?.id} (Role: ${result.data.user?.role})`);
-  console.log(`Mobile: ${targetMobile}`);
-  console.log(`JWT Token: ${result.data.token}`);
-  console.log(`Refresh Token: ${result.data.refreshToken}`);
+  console.log(`Mobile: ${maskedMobile}`);
+  console.log(`JWT Token: ${result.data.token ? result.data.token.substring(0, 15) + '...' : 'NONE'}`);
   console.log(`Expires At: ${result.data.expiresAt}`);
   console.log('========================================\n');
 
@@ -48,12 +50,14 @@ const staffLogin = asyncHandler(async (req, res) => {
     userAgent
   });
 
+  const maskedMobile = targetMobile
+    ? `${targetMobile.slice(0, 3)}****${targetMobile.slice(-2)}`
+    : 'N/A';
   console.log('\n========================================');
   console.log(`[STAFF LOGIN SUCCESS]`);
   console.log(`Staff: ${result.data.user?.nameEnglish} (ID: ${result.data.user?.staffId || result.data.user?.id})`);
-  console.log(`Mobile: ${targetMobile}`);
-  console.log(`JWT Token: ${result.data.token}`);
-  console.log(`Refresh Token: ${result.data.refreshToken}`);
+  console.log(`Mobile: ${maskedMobile}`);
+  console.log(`JWT Token: ${result.data.token ? result.data.token.substring(0, 15) + '...' : 'NONE'}`);
   console.log(`Expires At: ${result.data.expiresAt}`);
   console.log('========================================\n');
 

@@ -129,7 +129,7 @@ const checkAvailability = async (input) => {
 /**
  * Create a new dynamic booking.
  */
-const createBooking = async (input, createdBy) => {
+const createBooking = async (input, createdBy, conn = null) => {
   const dateKey = input.dateKey || input.date || input.booking_date;
   if (!dateKey) {
     throw ApiError.badRequest('dateKey is required.');
@@ -159,11 +159,16 @@ const createBooking = async (input, createdBy) => {
   const timings = calculateBookingTimings(startTimeStr, durationMins);
 
   // Priest resolution
-  const rawPriests = input.priestId || input.priest_id || input.priestIds || input.priest_ids;
+  const rawPriests = input.priestId || input.priest_id || input.priestStaffId || input.priest_staff_id || input.priestIds || input.priest_ids;
   let priestId = Array.isArray(rawPriests) ? String(rawPriests[0]) : (rawPriests ? String(rawPriests) : null);
+  if (priestId === 'null' || priestId === 'undefined' || !priestId) {
+    priestId = null;
+  }
   let priestName = input.priestName || input.priest_name;
   let priestPhone = input.priestPhone || input.priest_phone;
-  let priestIds = Array.isArray(rawPriests) ? rawPriests.map(String) : (priestId ? [priestId] : []);
+  let priestIds = Array.isArray(rawPriests)
+    ? rawPriests.map(String).filter(p => p && p !== 'null' && p !== 'undefined')
+    : (priestId ? [priestId] : []);
 
   if (!priestName && priestId) {
     const staff = await projectModel.getStaffById(priestId);
@@ -211,8 +216,8 @@ const createBooking = async (input, createdBy) => {
     createdBy
   };
 
-  const id = await bookingModel.createBooking(bookingData);
-  const created = await bookingModel.getBookingById(id);
+  const id = await bookingModel.createBooking(bookingData, conn);
+  const created = await bookingModel.getBookingById(id, conn);
   return formatBooking(created);
 };
 
@@ -256,8 +261,8 @@ const getBookingBalance = async (id) => {
 /**
  * Update existing booking with strict 24-hour edit restriction.
  */
-const updateBooking = async (id, input, updatedBy) => {
-  const existing = await bookingModel.getBookingById(id);
+const updateBooking = async (id, input, updatedBy, conn = null) => {
+  const existing = await bookingModel.getBookingById(id, conn);
   if (!existing) {
     throw ApiError.notFound('Booking not found.');
   }
@@ -402,16 +407,16 @@ const updateBooking = async (id, input, updatedBy) => {
     updateData.priestAdvancePaid = Number(input.priestAdvancePaid !== undefined ? input.priestAdvancePaid : input.priest_advance_paid) || 0;
   }
 
-  await bookingModel.updateBooking(id, updateData);
-  const updated = await bookingModel.getBookingById(id);
+  await bookingModel.updateBooking(id, updateData, conn);
+  const updated = await bookingModel.getBookingById(id, conn);
   return formatBooking(updated);
 };
 
 /**
  * Soft delete or cancel a booking.
  */
-const deleteBooking = async (id) => {
-  const success = await bookingModel.deleteBooking(id);
+const deleteBooking = async (id, conn = null) => {
+  const success = await bookingModel.deleteBooking(id, conn);
   if (!success) {
     throw ApiError.notFound('Booking not found.');
   }
@@ -421,7 +426,7 @@ const deleteBooking = async (id) => {
 /**
  * Record a manual cash payment transaction.
  */
-const recordPayment = async (bookingId, input, userId) => {
+const recordPayment = async (bookingId, input, userId, conn = null) => {
   const result = await bookingModel.recordPayment({
     bookingId,
     party: input.party,
@@ -430,7 +435,7 @@ const recordPayment = async (bookingId, input, userId) => {
     notes: input.notes,
     staffId: input.staffId || null,
     createdBy: userId
-  });
+  }, conn);
 
   if (result.notFound) throw ApiError.notFound('Booking not found.');
   if (result.exceedsBalance) {
@@ -439,7 +444,7 @@ const recordPayment = async (bookingId, input, userId) => {
     });
   }
 
-  const updatedBooking = await bookingModel.getBookingById(bookingId);
+  const updatedBooking = await bookingModel.getBookingById(bookingId, conn);
 
   return {
     transactionId: String(result.transactionId),

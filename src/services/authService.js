@@ -94,6 +94,7 @@ const loginUser = async ({ mobileNumber, password, role, ipAddress, userAgent })
       userPayload = {
         id: String(staff.id),
         staffId: staff.staff_id || String(staff.id),
+        userId: user.id,
         role: 'staff',
         staffRole: staff.staff_role,
         nameEnglish: staff.name_english,
@@ -253,6 +254,7 @@ const getCurrentUser = async (userId) => {
       return {
         id: String(staff.id),
         staffId: staff.staff_id || String(staff.id),
+        userId: user.id,
         role: 'staff',
         staffRole: staff.staff_role,
         nameEnglish: staff.name_english,

@@ -1,4 +1,7 @@
 const { pool } = require('../config/database');
+const outboxModel = require('./outboxModel');
+const bookingReminderService = require('../services/bookingReminderService');
+const { NOTIFICATION_EVENTS, generateEventIdempotencyKey } = require('../constants/notificationConstants');
 
 const getDashboardOverview = async (userId) => {
   const [rows] = await pool.execute(`
@@ -8,7 +11,7 @@ const getDashboardOverview = async (userId) => {
       (SELECT COUNT(*) FROM bookings WHERE date_key > CURDATE() AND date_key <= DATE_ADD(CURDATE(), INTERVAL 7 DAY) AND status != 'cancelled') AS upcoming_seven_days_count,
       (SELECT COUNT(*) FROM leave_requests WHERE status = 'PENDING') AS pending_approval_count,
       (SELECT COUNT(*) FROM bookings WHERE status = 'completed') AS completed_total_count,
-      (SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0) AS unread_notifications_count;
+      (SELECT COUNT(*) FROM notification_recipients WHERE user_id = ? AND is_deleted = 0 AND in_app_visible = 1 AND read_at IS NULL) AS unread_notifications_count;
   `, [userId]);
   return rows[0];
 };
@@ -434,52 +437,83 @@ const getAttendanceByStaffAndDate = async (staffId, dateKey) => {
   return rows[0] || null;
 };
 
-const upsertAttendance = async ({ staffId, dateKey, status, submissionTime, remarks, updatedBy }) => {
-  const staff = await getStaffById(staffId);
-  const targetId = staff ? staff.id : staffId;
-
-  const [prevRows] = await pool.execute(
-    'SELECT * FROM attendance_records WHERE staff_id = ? AND date_key = ? LIMIT 1;',
-    [targetId, dateKey]
-  );
-  const prev = prevRows[0];
-  const prevStatus = prev ? prev.status : 'NOT_MARKED';
-  const prevRemarks = prev ? prev.remarks : null;
-
-  await pool.execute(`
-    INSERT INTO attendance_records (staff_id, date_key, status, submission_time, remarks, updated_by, is_sealed)
-    VALUES (?, ?, ?, ?, ?, ?, 1)
-    ON DUPLICATE KEY UPDATE status = VALUES(status), submission_time = VALUES(submission_time),
-      remarks = VALUES(remarks), updated_by = VALUES(updated_by), is_sealed = 1;
-  `, [targetId, dateKey, status.toUpperCase(), submissionTime || null, remarks || null, updatedBy]);
-
-  const [rows] = await pool.execute(
-    'SELECT * FROM attendance_records WHERE staff_id = ? AND date_key = ? LIMIT 1;',
-    [targetId, dateKey]
-  );
-  const updatedRecord = rows[0];
+const upsertAttendance = async ({ staffId, dateKey, status, submissionTime, remarks, updatedBy }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
 
   try {
-    await pool.execute(`
-      INSERT INTO staff_attendance_audit (
-        attendance_record_id, staff_id, date_key, previous_status, new_status,
-        previous_remarks, new_remarks, action_type, changed_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ADMIN_OVERRIDE', ?);
-    `, [
-      updatedRecord ? updatedRecord.id : null,
-      targetId,
-      dateKey,
-      prevStatus,
-      status.toUpperCase(),
-      prevRemarks,
-      remarks || null,
-      updatedBy
-    ]);
-  } catch (auditErr) {
-    console.warn('[AUDIT_WARNING] Failed to record attendance audit:', auditErr.message);
-  }
+    if (!isExternalConn) await connection.beginTransaction();
 
-  return updatedRecord;
+    const staff = await getStaffById(staffId);
+    const targetId = staff ? staff.id : staffId;
+
+    const [prevRows] = await connection.execute(
+      'SELECT * FROM attendance_records WHERE staff_id = ? AND date_key = ? LIMIT 1;',
+      [targetId, dateKey]
+    );
+    const prev = prevRows[0];
+    const prevStatus = prev ? prev.status : 'NOT_MARKED';
+    const prevRemarks = prev ? prev.remarks : null;
+
+    await connection.execute(`
+      INSERT INTO attendance_records (staff_id, date_key, status, submission_time, remarks, updated_by, is_sealed)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+      ON DUPLICATE KEY UPDATE status = VALUES(status), submission_time = VALUES(submission_time),
+        remarks = VALUES(remarks), updated_by = VALUES(updated_by), is_sealed = 1;
+    `, [targetId, dateKey, status.toUpperCase(), submissionTime || null, remarks || null, updatedBy]);
+
+    const [rows] = await connection.execute(
+      'SELECT * FROM attendance_records WHERE staff_id = ? AND date_key = ? LIMIT 1;',
+      [targetId, dateKey]
+    );
+    const updatedRecord = rows[0];
+
+    try {
+      await connection.execute(`
+        INSERT INTO staff_attendance_audit (
+          attendance_record_id, staff_id, date_key, previous_status, new_status,
+          previous_remarks, new_remarks, action_type, changed_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ADMIN_OVERRIDE', ?);
+      `, [
+        updatedRecord ? updatedRecord.id : null,
+        targetId,
+        dateKey,
+        prevStatus,
+        status.toUpperCase(),
+        prevRemarks,
+        remarks || null,
+        updatedBy
+      ]);
+    } catch (auditErr) {
+      console.warn('[AUDIT_WARNING] Failed to record attendance audit:', auditErr.message);
+    }
+
+    // Attendance alerts for ABSENT or LEAVE status (notifies all Admins)
+    if (['ABSENT', 'LEAVE'].includes(status.toUpperCase())) {
+      const eventKey = generateEventIdempotencyKey('ATTENDANCE_ALERT', 'attendance', `${targetId}_${dateKey}_${status.toUpperCase()}`);
+      await outboxModel.insertEventTx(connection, {
+        eventType: NOTIFICATION_EVENTS.ATTENDANCE_ALERT,
+        entityType: 'attendance',
+        entityId: `${targetId}_${dateKey}`,
+        eventKey,
+        payload: {
+          staffId: targetId,
+          dateKey,
+          status: status.toUpperCase(),
+          remarks: remarks || null,
+          updatedBy
+        }
+      });
+    }
+
+    if (!isExternalConn) await connection.commit();
+    return updatedRecord;
+  } catch (error) {
+    if (!isExternalConn) await connection.rollback();
+    throw error;
+  } finally {
+    if (!isExternalConn) connection.release();
+  }
 };
 
 const getStaffMonthlyAttendance = async (staffIdOrCode, startDate, endDate) => {
@@ -515,28 +549,48 @@ const submitAttendance = async ({ staffId, dateKey, status, submissionTime, rema
   return result.insertId;
 };
 
-const listLeaveRequests = async (status) => {
+const listLeaveRequests = async (status = 'ALL', staffId = null) => {
+  const whereClauses = [];
+  const params = [];
+
+  if (status && status.toUpperCase() !== 'ALL') {
+    whereClauses.push('l.status = ?');
+    params.push(status.toUpperCase());
+  }
+
+  if (staffId) {
+    whereClauses.push('l.staff_id = ?');
+    params.push(staffId);
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
   const [counts] = await pool.execute(`
     SELECT COUNT(*) AS all_count,
       SUM(status = 'PENDING') AS pending_count,
       SUM(status = 'APPROVED') AS approved_count,
       SUM(status = 'REJECTED') AS rejected_count
-    FROM leave_requests;
-  `);
+    FROM leave_requests l
+    ${staffId ? 'WHERE l.staff_id = ?' : ''};
+  `, staffId ? [staffId] : []);
+
   const [leaves] = await pool.execute(`
     SELECT l.*, s.name_english, s.name_tamil, s.designation
     FROM leave_requests l
     INNER JOIN staff s ON s.id = l.staff_id
-    WHERE (? = 'ALL' OR l.status = ?)
+    ${whereSql}
     ORDER BY l.created_at DESC;
-  `, [status.toUpperCase(), status.toUpperCase()]);
+  `, params);
+
   return { counts: counts[0], leaves };
 };
 
-const createLeaveRequest = async ({ staffId, startDate, endDate, leaveType, reason }) => {
-  const connection = await pool.getConnection();
+const createLeaveRequest = async ({ staffId, startDate, endDate, leaveType, reason }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
   try {
-    await connection.beginTransaction();
+    if (!isExternalConn) await connection.beginTransaction();
+
     await connection.execute('SELECT id FROM staff WHERE id = ? FOR UPDATE;', [staffId]);
     const [overlaps] = await connection.execute(`
       SELECT id FROM leave_requests
@@ -544,37 +598,104 @@ const createLeaveRequest = async ({ staffId, startDate, endDate, leaveType, reas
         AND start_date <= ? AND end_date >= ? LIMIT 1;
     `, [staffId, endDate, startDate]);
     if (overlaps.length) {
-      await connection.rollback();
+      if (!isExternalConn) await connection.rollback();
       return { conflict: true };
     }
     const [result] = await connection.execute(`
-      INSERT INTO leave_requests (staff_id, start_date, end_date, leave_type, reason)
-      VALUES (?, ?, ?, ?, ?);
+      INSERT INTO leave_requests (staff_id, start_date, end_date, leave_type, reason, decision_version)
+      VALUES (?, ?, ?, ?, ?, 0);
     `, [staffId, startDate, endDate, leaveType, reason]);
-    await connection.commit();
-    return { id: result.insertId };
+
+    const leaveId = result.insertId;
+
+    // Outbox Event: LEAVE_REQUESTED (notifies all Admins)
+    const eventKey = generateEventIdempotencyKey('LEAVE_REQUESTED', 'leave', leaveId);
+    await outboxModel.insertEventTx(connection, {
+      eventType: NOTIFICATION_EVENTS.LEAVE_REQUESTED,
+      entityType: 'leave',
+      entityId: leaveId,
+      eventKey,
+      payload: {
+        leaveId,
+        staffId,
+        startDate,
+        endDate,
+        leaveType,
+        reason
+      }
+    });
+
+    if (!isExternalConn) await connection.commit();
+    return { id: leaveId };
   } catch (error) {
-    await connection.rollback();
+    if (!isExternalConn) await connection.rollback();
     throw error;
   } finally {
-    connection.release();
+    if (!isExternalConn) connection.release();
   }
 };
 
-const decideLeaveRequest = async ({ leaveId, decision, remarks, decidedBy }) => {
-  const [result] = await pool.execute(`
-    UPDATE leave_requests
-    SET status = ?, admin_remarks = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND status = 'PENDING';
-  `, [decision.toUpperCase(), remarks || null, decidedBy, leaveId]);
-  if (!result.affectedRows) return null;
-  const [rows] = await pool.execute('SELECT * FROM leave_requests WHERE id = ? LIMIT 1;', [leaveId]);
-  return rows[0] || null;
+const decideLeaveRequest = async ({ leaveId, decision, remarks, decidedBy }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
+  try {
+    if (!isExternalConn) await connection.beginTransaction();
+
+    // Atomic update with decision_version concurrency guard
+    const [result] = await connection.execute(`
+      UPDATE leave_requests
+      SET status = ?, admin_remarks = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP, decision_version = decision_version + 1
+      WHERE id = ? AND status = 'PENDING';
+    `, [decision.toUpperCase(), remarks || null, decidedBy, leaveId]);
+
+    if (!result.affectedRows) {
+      if (!isExternalConn) await connection.rollback();
+      return null;
+    }
+
+    const [rows] = await connection.execute('SELECT * FROM leave_requests WHERE id = ? LIMIT 1;', [leaveId]);
+    const leaveRow = rows[0];
+
+    // Outbox Event: LEAVE_APPROVED or LEAVE_REJECTED (notifies requesting staff member only)
+    const eventType = decision.toUpperCase() === 'APPROVED'
+      ? NOTIFICATION_EVENTS.LEAVE_APPROVED
+      : NOTIFICATION_EVENTS.LEAVE_REJECTED;
+
+    const newVersion = leaveRow.decision_version || 1;
+    const eventKey = generateEventIdempotencyKey(eventType, 'leave', leaveId, `v${newVersion}`);
+
+    await outboxModel.insertEventTx(connection, {
+      eventType,
+      entityType: 'leave',
+      entityId: leaveId,
+      eventKey,
+      payload: {
+        leaveId,
+        staffId: leaveRow.staff_id,
+        decision: decision.toUpperCase(),
+        adminRemarks: remarks || null,
+        decidedBy,
+        decisionVersion: newVersion
+      }
+    });
+
+    if (!isExternalConn) await connection.commit();
+    return leaveRow;
+  } catch (error) {
+    if (!isExternalConn) await connection.rollback();
+    throw error;
+  } finally {
+    if (!isExternalConn) connection.release();
+  }
 };
 
 const getStaffDashboard = async (staffId, date) => {
   const [staffRows] = await pool.execute('SELECT * FROM staff WHERE id = ? LIMIT 1;', [staffId]);
   if (!staffRows.length) return null;
+  const staff = staffRows[0];
+  const sId = staff.id;
+  const sCode = staff.staff_id || String(sId);
+
   const [attendanceRows] = await pool.execute(`
     SELECT * FROM attendance_records WHERE staff_id = ? AND date_key = ? LIMIT 1;
   `, [staffId, date]);
@@ -583,20 +704,22 @@ const getStaffDashboard = async (staffId, date) => {
       SUM(date_key = ? AND status != 'cancelled') AS today_count,
       SUM(date_key > ? AND status != 'cancelled') AS upcoming_count,
       SUM(date_key <= ? AND status IN ('confirmed', 'pending')) AS pending_completion_count
-    FROM bookings WHERE CAST(priest_id AS CHAR) = CAST(? AS CHAR);
-  `, [date, date, date, staffId]);
+    FROM bookings 
+    WHERE (priest_id = ? OR priest_id = ? OR id IN (SELECT booking_id FROM booking_priests WHERE staff_id = ?));
+  `, [date, date, date, sCode, String(sId), sId]);
   const [events] = await pool.execute(`
     SELECT id, date_key, time_slot, title, category, category_label_tamil,
       client_name, client_phone, location, status
-    FROM bookings WHERE CAST(priest_id AS CHAR) = CAST(? AS CHAR)
+    FROM bookings 
+    WHERE (priest_id = ? OR priest_id = ? OR id IN (SELECT booking_id FROM booking_priests WHERE staff_id = ?))
       AND date_key = ? AND status != 'cancelled' ORDER BY time_slot;
-  `, [staffId, date]);
+  `, [sCode, String(sId), sId, date]);
   const [reminders] = await pool.execute(`
     SELECT id, title_tamil, description_tamil, reminder_time, status
     FROM staff_reminders WHERE staff_id = ? AND date_key = ? ORDER BY reminder_time;
   `, [staffId, date]);
   return {
-    staff: staffRows[0],
+    staff,
     attendance: attendanceRows[0] || null,
     counts: counts[0],
     events,
@@ -604,14 +727,75 @@ const getStaffDashboard = async (staffId, date) => {
   };
 };
 
-const completeEvent = async ({ eventId, staffId, notes }) => {
-  const [result] = await pool.execute(`
-    UPDATE bookings SET status = 'completed', completion_notes = ?, completed_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND CAST(priest_id AS CHAR) = CAST(? AS CHAR) AND status IN ('confirmed', 'pending');
-  `, [notes || null, eventId, staffId]);
-  if (!result.affectedRows) return null;
-  const [rows] = await pool.execute('SELECT id, status, completed_at, completion_notes FROM bookings WHERE id = ?;', [eventId]);
-  return rows[0] || null;
+const completeEvent = async ({ eventId, staffId, notes }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
+  try {
+    if (!isExternalConn) await connection.beginTransaction();
+
+    const [staffRows] = await connection.query('SELECT staff_id FROM staff WHERE id = ? LIMIT 1;', [staffId]);
+    const staffCode = staffRows.length > 0 ? staffRows[0].staff_id : String(staffId);
+
+    const [existing] = await connection.query(`
+      SELECT id, booking_number, title, date_key, priest_id, priest_name, status
+      FROM bookings
+      WHERE id = ? 
+        AND (priest_id = ? OR priest_id = ? OR id IN (SELECT booking_id FROM booking_priests WHERE staff_id = ?))
+        AND status IN ('confirmed', 'pending')
+      FOR UPDATE;
+    `, [eventId, staffCode, String(staffId), staffId]);
+
+    if (!existing || existing.length === 0) {
+      if (!isExternalConn) await connection.rollback();
+      return null;
+    }
+
+    const booking = existing[0];
+
+    const [result] = await connection.execute(`
+      UPDATE bookings
+      SET status = 'completed', completion_notes = ?, completed_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status IN ('confirmed', 'pending');
+    `, [notes || null, eventId]);
+
+    if (!result.affectedRows) {
+      if (!isExternalConn) await connection.rollback();
+      return null;
+    }
+
+    // 1. Invalidate pending reminder jobs
+    await bookingReminderService.cancelBookingReminders(connection, {
+      bookingId: eventId,
+      reason: 'Booking completed'
+    });
+
+    // 2. Insert outbox event BOOKING_COMPLETED
+    const eventKey = generateEventIdempotencyKey('BOOKING_COMPLETED', 'booking', eventId);
+    await outboxModel.insertEventTx(connection, {
+      eventType: NOTIFICATION_EVENTS.BOOKING_COMPLETED,
+      entityType: 'booking',
+      entityId: eventId,
+      eventKey,
+      payload: {
+        bookingId: eventId,
+        bookingNumber: booking.booking_number,
+        title: booking.title,
+        staffId,
+        priestId: booking.priest_id,
+        notes: notes || null
+      }
+    });
+
+    const [rows] = await connection.execute('SELECT id, status, completed_at, completion_notes FROM bookings WHERE id = ?;', [eventId]);
+
+    if (!isExternalConn) await connection.commit();
+    return rows[0] || null;
+  } catch (error) {
+    if (!isExternalConn) await connection.rollback();
+    throw error;
+  } finally {
+    if (!isExternalConn) connection.release();
+  }
 };
 
 const getAdminProfile = async (userId) => {
@@ -651,15 +835,28 @@ const updateAdminAvatar = async (userId, avatarUrl) => {
   }
 };
 
-const updateAdminProfile = async ({ userId, phone, email, addressTamil }) => {
+const updateAdminProfile = async ({ userId, phone, email, addressTamil, nameEnglish, nameTamil }) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    await connection.execute('UPDATE users SET mobile = ?, email = ? WHERE id = ?;', [phone, email || null, userId]);
+
+    const userUpdates = [];
+    const userParams = [];
+    if (phone) { userUpdates.push('mobile = ?'); userParams.push(phone); }
+    if (email !== undefined) { userUpdates.push('email = ?'); userParams.push(email || null); }
+    if (nameEnglish) { userUpdates.push('name = ?'); userParams.push(nameEnglish); }
+
+    if (userUpdates.length > 0) {
+      await connection.execute(`UPDATE users SET ${userUpdates.join(', ')} WHERE id = ?;`, [...userParams, userId]);
+    }
+
     await connection.execute(`
-      INSERT INTO admin_profiles (user_id, address_tamil) VALUES (?, ?)
-      ON DUPLICATE KEY UPDATE address_tamil = VALUES(address_tamil);
-    `, [userId, addressTamil || null]);
+      INSERT INTO admin_profiles (user_id, address_tamil, name_tamil) VALUES (?, ?, ?)
+      ON DUPLICATE KEY UPDATE 
+        address_tamil = COALESCE(VALUES(address_tamil), address_tamil),
+        name_tamil = COALESCE(VALUES(name_tamil), name_tamil);
+    `, [userId, addressTamil || null, nameTamil || null]);
+
     await connection.commit();
     return getAdminProfile(userId);
   } catch (error) {
@@ -670,37 +867,64 @@ const updateAdminProfile = async ({ userId, phone, email, addressTamil }) => {
   }
 };
 
-const recordBookingPayment = async ({ bookingId, party, amount, paymentMethod, reference, notes, createdBy }) => {
-  const connection = await pool.getConnection();
+const recordBookingPayment = async ({ bookingId, party, amount, paymentMethod, reference, notes, createdBy }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
   try {
-    await connection.beginTransaction();
+    if (!isExternalConn) await connection.beginTransaction();
     const [bookings] = await connection.execute(
       'SELECT * FROM bookings WHERE id = ? FOR UPDATE;', [bookingId]
     );
     if (!bookings.length) {
-      await connection.rollback();
+      if (!isExternalConn) await connection.rollback();
       return { notFound: true };
     }
     const booking = bookings[0];
     const total = Number(party === 'CLIENT' ? booking.total_event_charge : booking.priest_total_pay);
     const received = Number(party === 'CLIENT' ? booking.client_total_received : booking.priest_advance_paid);
     if (Number(amount) > total - received) {
-      await connection.rollback();
+      if (!isExternalConn) await connection.rollback();
       return { exceedsBalance: true, balance: total - received };
     }
     const updateColumn = party === 'CLIENT' ? 'client_total_received' : 'priest_advance_paid';
-    await connection.execute(`UPDATE bookings SET ${updateColumn} = ${updateColumn} + ? WHERE id = ?;`, [amount, bookingId]);
+    const statusColumn = party === 'CLIENT' ? 'client_payment_status' : 'priest_payment_status';
+    const newTotalReceived = received + Number(amount);
+    const newStatus = newTotalReceived >= total && total > 0 ? 'paid' : (newTotalReceived > 0 ? 'partial' : 'pending');
+
+    await connection.execute(`UPDATE bookings SET ${updateColumn} = ?, ${statusColumn} = ? WHERE id = ?;`, [newTotalReceived, newStatus, bookingId]);
     const [transaction] = await connection.execute(`
       INSERT INTO booking_transactions (booking_id, party, amount, payment_method, reference, notes, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?);
     `, [bookingId, party, amount, paymentMethod || 'cash', reference || null, notes || null, createdBy]);
-    await connection.commit();
-    return { transactionId: transaction.insertId };
+
+    const transactionId = transaction.insertId;
+
+    // Outbox Event: PAYMENT_UPDATED
+    const eventKey = generateEventIdempotencyKey('PAYMENT_UPDATED', 'payment', transactionId);
+    await outboxModel.insertEventTx(connection, {
+      eventType: NOTIFICATION_EVENTS.PAYMENT_UPDATED,
+      entityType: 'payment',
+      entityId: transactionId,
+      eventKey,
+      payload: {
+        bookingId,
+        bookingNumber: booking.booking_number,
+        transactionId,
+        party: party.toUpperCase(),
+        amount: Number(amount),
+        paymentMethod: paymentMethod || 'cash',
+        priestId: party.toUpperCase() !== 'CLIENT' ? booking.priest_id : null,
+        updatedPaymentStatus: newStatus
+      }
+    });
+
+    if (!isExternalConn) await connection.commit();
+    return { transactionId };
   } catch (error) {
-    await connection.rollback();
+    if (!isExternalConn) await connection.rollback();
     throw error;
   } finally {
-    connection.release();
+    if (!isExternalConn) connection.release();
   }
 };
 

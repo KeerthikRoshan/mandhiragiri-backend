@@ -1,7 +1,10 @@
 const notificationModel = require('../models/notificationModel');
+const outboxModel = require('../models/outboxModel');
+const { getQueueHealthData } = require('../../scripts/monitorNotificationQueues');
 const { sendSuccess } = require('../utils/response');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
+
 
 /**
  * List in-app notifications for authenticated user
@@ -125,6 +128,68 @@ const updatePreferences = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * Get notification queue health and heartbeat metrics (Admin only)
+ * GET /api/v1/notifications/admin/queue-health
+ */
+const getQueueHealth = asyncHandler(async (req, res) => {
+  const healthData = await getQueueHealthData();
+  return sendSuccess(res, 'Queue health retrieved successfully.', healthData, 200);
+});
+
+/**
+ * Retry failed notification push job (Admin only)
+ * POST /api/v1/notifications/admin/retry-job/:jobId
+ */
+const retryFailedJob = asyncHandler(async (req, res) => {
+  const { jobId } = req.params;
+  const adminUserId = req.user.id;
+  const { reason } = req.body || {};
+
+  const result = await notificationModel.retryFailedPushJob({
+    jobId,
+    adminUserId,
+    reason
+  });
+
+  if (result.notFound) {
+    throw new ApiError(404, `Notification job with ID ${jobId} not found.`);
+  }
+  if (result.isCancelled) {
+    throw new ApiError(400, 'Cannot retry CANCELLED notification job.');
+  }
+  if (result.invalidStatus) {
+    throw new ApiError(400, `Cannot retry notification job with status ${result.currentStatus}. Only FAILED jobs can be retried.`);
+  }
+
+  return sendSuccess(res, 'Notification job reset for retry successfully.', result, 200);
+});
+
+/**
+ * Retry failed outbox event (Admin only)
+ * POST /api/v1/notifications/admin/retry-outbox/:eventId
+ */
+const retryFailedOutbox = asyncHandler(async (req, res) => {
+  const { eventId } = req.params;
+  const adminUserId = req.user.id;
+  const { reason } = req.body || {};
+
+  const result = await outboxModel.retryFailedOutboxEvent({
+    eventId,
+    adminUserId,
+    reason
+  });
+
+  if (result.notFound) {
+    throw new ApiError(404, `Outbox event with ID ${eventId} not found.`);
+  }
+  if (result.invalidStatus) {
+    throw new ApiError(400, `Cannot retry outbox event with status ${result.currentStatus}. Only FAILED events can be retried.`);
+  }
+
+  return sendSuccess(res, 'Outbox event reset for retry successfully.', result, 200);
+});
+
 module.exports = {
   listNotifications,
   getUnreadCount,
@@ -132,5 +197,9 @@ module.exports = {
   markAllNotificationsAsRead,
   deleteNotification,
   getPreferences,
-  updatePreferences
+  updatePreferences,
+  getQueueHealth,
+  retryFailedJob,
+  retryFailedOutbox
 };
+

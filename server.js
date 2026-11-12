@@ -9,6 +9,7 @@ const { testConnection, closePool } = require('./src/config/database');
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
 let server;
+let cronInterval = null;
 
 /**
  * Start Express HTTP server and verify database connectivity
@@ -33,6 +34,20 @@ const startServer = async () => {
       console.log(`  Auth API:    http://localhost:${PORT}/api/v1/auth    `);
       console.log(`=======================================================`);
     });
+
+    // In local development / testing, run periodic cron worker if not production or if enabled
+    if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_DEV_CRON === 'true') {
+      const { runMasterCron } = require('./scripts/cronRunner');
+      const DEV_CRON_INTERVAL_MS = parseInt(process.env.DEV_CRON_INTERVAL_MS, 10) || 5000;
+      console.log(`[Server] Enabling local dev cron worker (interval: ${DEV_CRON_INTERVAL_MS}ms)`);
+      cronInterval = setInterval(async () => {
+        try {
+          await runMasterCron({ shouldClosePool: false });
+        } catch (err) {
+          console.warn('[Server Dev Cron Warning]', err.message);
+        }
+      }, DEV_CRON_INTERVAL_MS);
+    }
   } catch (error) {
     console.error('[Server Error] Failed to start server:', error);
     process.exit(1);
@@ -45,6 +60,11 @@ const startServer = async () => {
  */
 const gracefulShutdown = (signal) => {
   console.log(`\n[Server] Received ${signal}. Initiating graceful shutdown...`);
+
+  if (cronInterval) {
+    clearInterval(cronInterval);
+    cronInterval = null;
+  }
 
   if (server) {
     server.close(async () => {

@@ -1,6 +1,14 @@
 const projectService = require('../services/projectService');
+const projectModel = require('../models/projectModel');
+const { pool } = require('../config/database');
+const { executeWithIdempotency } = require('../services/apiIdempotencyService');
 const { sendSuccess } = require('../utils/response');
 const asyncHandler = require('../utils/asyncHandler');
+const ApiError = require('../utils/ApiError');
+
+const getIdempotencyKey = (req) => {
+  return req.headers['idempotency-key'] || req.headers['x-idempotency-key'] || null;
+};
 
 const dashboardOverview = asyncHandler(async (req, res) => {
   const data = await projectService.getDashboardOverview(req.user.id);
@@ -86,12 +94,59 @@ const dailyAttendance = asyncHandler(async (req, res) => {
 });
 
 const updateAttendance = asyncHandler(async (req, res) => {
-  const data = await projectService.updateAttendance(req.body, req.user.id);
-  return sendSuccess(res, 'வருகைப் பதிவு வெற்றிகரமாக திருத்தப்பட்டது.', data);
+  const idempotencyKey = getIdempotencyKey(req);
+  const result = await executeWithIdempotency(
+    pool,
+    {
+      userId: req.user?.id || 0,
+      idempotencyKey,
+      httpMethod: 'POST',
+      requestPath: req.baseUrl ? `${req.baseUrl}${req.path}` : req.originalUrl.split('?')[0],
+      query: req.query,
+      body: req.body
+    },
+    async (conn) => {
+      const data = await projectService.updateAttendance(req.body, req.user.id, conn);
+      return {
+        statusCode: 200,
+        body: {
+          status: 1,
+          success: true,
+          message: 'வருகைப் பதிவு வெற்றிகரமாக திருத்தப்பட்டது.',
+          data,
+          errors: null,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  );
+
+  if (result.isReplay) {
+    res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
+  }
+  return res.status(result.statusCode).json(result.body);
 });
 
 const staffMonthlyAttendance = asyncHandler(async (req, res) => {
-  const data = await projectService.getStaffMonthlyAttendance(req.params.staffId, req.query);
+  let targetStaffId = req.params.staffId;
+  const isStaff = ['STAFF', 'PRIEST', 'ASSISTANT'].includes(String(req.user?.role).toUpperCase());
+
+  // If caller is Staff, enforce that they can only view their own attendance
+  if (isStaff) {
+    const staff = await projectModel.getStaffByUserId(req.user.id);
+    if (!staff) {
+      throw ApiError.forbidden('Staff profile not found or inactive.');
+    }
+    if (
+      String(targetStaffId) !== String(staff.id) &&
+      String(targetStaffId) !== String(staff.staff_id)
+    ) {
+      throw ApiError.forbidden('Access denied. You can only view your own attendance.');
+    }
+    targetStaffId = staff.id;
+  }
+
+  const data = await projectService.getStaffMonthlyAttendance(targetStaffId, req.query);
   return sendSuccess(res, 'Monthly attendance retrieved.', data);
 });
 
@@ -105,14 +160,77 @@ const allLeaveRequests = asyncHandler(async (req, res) => {
   return sendSuccess(res, 'Staff leave applications retrieved.', data);
 });
 
+const myLeaveRequests = asyncHandler(async (req, res) => {
+  const data = await projectService.getStaffLeaveRequests(req.user.id, req.query.status || 'all');
+  return sendSuccess(res, 'My leave requests retrieved successfully.', data);
+});
+
 const decideLeave = asyncHandler(async (req, res) => {
-  const data = await projectService.decideLeave({ ...req.body, leaveId: req.params.leaveId }, req.user);
-  return sendSuccess(res, 'விடுப்பு விண்ணப்ப முடிவு பதிவு செய்யப்பட்டது.', data);
+  const idempotencyKey = getIdempotencyKey(req);
+  const result = await executeWithIdempotency(
+    pool,
+    {
+      userId: req.user?.id || 0,
+      idempotencyKey,
+      httpMethod: 'POST',
+      requestPath: req.baseUrl ? `${req.baseUrl}${req.path}` : req.originalUrl.split('?')[0],
+      query: req.query,
+      body: req.body
+    },
+    async (conn) => {
+      const data = await projectService.decideLeave({ ...req.body, leaveId: req.params.leaveId }, req.user, conn);
+      return {
+        statusCode: 200,
+        body: {
+          status: 1,
+          success: true,
+          message: 'விடுப்பு விண்ணப்ப முடிவு பதிவு செய்யப்பட்டது.',
+          data,
+          errors: null,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  );
+
+  if (result.isReplay) {
+    res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
+  }
+  return res.status(result.statusCode).json(result.body);
 });
 
 const applyLeave = asyncHandler(async (req, res) => {
-  const data = await projectService.applyLeave(req.body, req.user.id);
-  return sendSuccess(res, 'விடுப்பு விண்ணப்பம் நிர்வாகியின் ஒப்புதலுக்கு அனுப்பப்பட்டது.', data, 201);
+  const idempotencyKey = getIdempotencyKey(req);
+  const result = await executeWithIdempotency(
+    pool,
+    {
+      userId: req.user?.id || 0,
+      idempotencyKey,
+      httpMethod: 'POST',
+      requestPath: req.baseUrl ? `${req.baseUrl}${req.path}` : req.originalUrl.split('?')[0],
+      query: req.query,
+      body: req.body
+    },
+    async (conn) => {
+      const data = await projectService.applyLeave(req.body, req.user.id, conn);
+      return {
+        statusCode: 201,
+        body: {
+          status: 1,
+          success: true,
+          message: 'விடுப்பு விண்ணப்பம் நிர்வாகியின் ஒப்புதலுக்கு அனுப்பப்பட்டது.',
+          data,
+          errors: null,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  );
+
+  if (result.isReplay) {
+    res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
+  }
+  return res.status(result.statusCode).json(result.body);
 });
 
 const staffDashboard = asyncHandler(async (req, res) => {
@@ -121,8 +239,37 @@ const staffDashboard = asyncHandler(async (req, res) => {
 });
 
 const completeEvent = asyncHandler(async (req, res) => {
-  const data = await projectService.completeEvent({ ...req.body, eventId: req.params.eventId }, req.user.id);
-  return sendSuccess(res, 'நிகழ்வு வெற்றிகரமாக முடிவுற்றதாக பதிவு செய்யப்பட்டது.', data);
+  const idempotencyKey = getIdempotencyKey(req);
+  const result = await executeWithIdempotency(
+    pool,
+    {
+      userId: req.user?.id || 0,
+      idempotencyKey,
+      httpMethod: req.method ? req.method.toUpperCase() : 'POST',
+      requestPath: req.baseUrl ? `${req.baseUrl}${req.path}` : req.originalUrl.split('?')[0],
+      query: req.query,
+      body: req.body
+    },
+    async (conn) => {
+      const data = await projectService.completeEvent({ ...req.body, eventId: req.params.eventId }, req.user.id, conn);
+      return {
+        statusCode: 200,
+        body: {
+          status: 1,
+          success: true,
+          message: 'நிகழ்வு வெற்றிகரமாக முடிவுற்றதாக பதிவு செய்யப்பட்டது.',
+          data,
+          errors: null,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  );
+
+  if (result.isReplay) {
+    res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
+  }
+  return res.status(result.statusCode).json(result.body);
 });
 
 const adminProfile = asyncHandler(async (req, res) => {
@@ -146,8 +293,37 @@ const uploadStaffAvatar = asyncHandler(async (req, res) => {
 });
 
 const recordBookingPayment = asyncHandler(async (req, res) => {
-  const data = await projectService.recordBookingPayment({ ...req.body, bookingId: req.params.bookingId }, req.user.id);
-  return sendSuccess(res, 'Payment recorded successfully.', data, 201);
+  const idempotencyKey = getIdempotencyKey(req);
+  const result = await executeWithIdempotency(
+    pool,
+    {
+      userId: req.user?.id || 0,
+      idempotencyKey,
+      httpMethod: 'POST',
+      requestPath: req.baseUrl ? `${req.baseUrl}${req.path}` : req.originalUrl.split('?')[0],
+      query: req.query,
+      body: req.body
+    },
+    async (conn) => {
+      const data = await projectService.recordBookingPayment({ ...req.body, bookingId: req.params.bookingId }, req.user.id, conn);
+      return {
+        statusCode: 201,
+        body: {
+          status: 1,
+          success: true,
+          message: 'Payment recorded successfully.',
+          data,
+          errors: null,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  );
+
+  if (result.isReplay) {
+    res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
+  }
+  return res.status(result.statusCode).json(result.body);
 });
 
 const bookingPayments = asyncHandler(async (req, res) => {
@@ -173,6 +349,7 @@ module.exports = {
   staffMonthlyAttendance,
   submitAttendance,
   allLeaveRequests,
+  myLeaveRequests,
   decideLeave,
   applyLeave,
   staffDashboard,

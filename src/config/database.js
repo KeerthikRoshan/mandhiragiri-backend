@@ -16,16 +16,43 @@ const pool = mysql.createPool({
   dateStrings: true
 });
 
+// Wrap corePool.getConnection to guarantee UTC initialization across pool.getConnection,
+// pool.query, pool.execute, newly created sockets, and reconnected physical sockets.
+const corePool = pool.pool;
+const origCoreGetConnection = corePool.getConnection.bind(corePool);
+
+corePool.getConnection = function (cb) {
+  origCoreGetConnection((err, conn) => {
+    if (err) return cb(err);
+    if (!conn._utcInitialized) {
+      conn.query("SET time_zone = '+00:00';", (err2) => {
+        if (err2) {
+          try {
+            conn.destroy();
+          } catch (_) {}
+          return cb(err2);
+        }
+        conn._utcInitialized = true;
+        cb(null, conn);
+      });
+    } else {
+      cb(null, conn);
+    }
+  });
+};
+
+
 /**
- * Test MySQL connection
+ * Test MySQL connection and verify UTC session timezone
  * @returns {Promise<boolean>}
  */
 const testConnection = async () => {
   try {
     const connection = await pool.getConnection();
     await connection.ping();
+    const [tzRows] = await connection.query("SELECT @@session.time_zone AS tz;");
     connection.release();
-    return true;
+    return tzRows[0]?.tz === '+00:00';
   } catch (error) {
     console.error('MySQL connection failed:', error.message);
     return false;

@@ -11,24 +11,26 @@ const { authenticate, authorizeRoles } = require('../middleware/authMiddleware')
 
 const router = express.Router();
 const adminOnly = [authenticate, authorizeRoles('SUPER_ADMIN', 'ADMIN')];
+const adminOrStaff = [authenticate, authorizeRoles('SUPER_ADMIN', 'ADMIN', 'STAFF', 'PRIEST', 'ASSISTANT')];
 
 // 1. Pooja / Event Types Configuration
-router.get('/event-types', ...adminOnly, bookingController.listEventTypes);
+router.get('/event-types', ...adminOrStaff, bookingController.listEventTypes);
 
 // 2. Availability & Conflict Checking
 router.post('/check-availability', ...adminOnly, validateAvailability, bookingController.checkAvailability);
 router.post('/checkAvailability', ...adminOnly, validateAvailability, bookingController.checkAvailability);
 
 // 3. Create & List Bookings
+router.post('/dev-test-reminder', ...adminOnly, bookingController.createDevTestReminderBooking);
 router.post('/', ...adminOnly, validateBooking, bookingController.createBooking);
-router.get('/', ...adminOnly, bookingController.listBookings);
+router.get('/', ...adminOrStaff, bookingController.listBookings);
 
 // 4. Date-wise & Priest-wise queries
-router.get('/date/:date', ...adminOnly, (req, res, next) => {
+router.get('/date/:date', ...adminOrStaff, (req, res, next) => {
   req.query.date = req.params.date;
   bookingController.listBookings(req, res, next);
 });
-router.get('/priest/:priestId', ...adminOnly, bookingController.getPriestBookings);
+router.get('/priest/:priestId', ...adminOrStaff, bookingController.getPriestBookings);
 
 // 5. Financial Audits & Settlement Endpoints
 router.get('/financial-audits/summary', ...adminOnly, bookingController.getFinancialAuditSummary);
@@ -36,7 +38,7 @@ router.get('/financial-audits/settlements', ...adminOnly, bookingController.getP
 router.get('/financial-audits/transactions', ...adminOnly, bookingController.getFinancialAuditTransactions);
 
 // 6. Booking Details, Update, Delete & Financials
-router.get('/:bookingId', ...adminOnly, validateBookingId, bookingController.getBookingDetails);
+router.get('/:bookingId', ...adminOrStaff, validateBookingId, bookingController.getBookingDetails);
 router.put('/:bookingId', ...adminOnly, validateBookingId, validateUpdateBooking, bookingController.updateBooking);
 router.delete('/:bookingId', ...adminOnly, validateBookingId, bookingController.deleteBooking);
 router.get('/:bookingId/balance', ...adminOnly, validateBookingId, bookingController.getBookingBalance);

@@ -484,7 +484,7 @@ const getCurrentTimeKolkata = () => {
   return `${hour}:${minute}:${second}`;
 };
 
-const updateAttendance = async (input, updatedBy) => {
+const updateAttendance = async (input, updatedBy, conn = null) => {
   const todayKolkata = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
   if (input.dateKey > todayKolkata && input.status.toLowerCase() !== 'leave') {
     throw ApiError.badRequest('Future dates can only be marked as Leave.');
@@ -518,7 +518,7 @@ const updateAttendance = async (input, updatedBy) => {
     submissionTime: finalSubmissionTime,
     remarks: input.remarks !== undefined ? input.remarks : (existingRecord ? existingRecord.remarks : null),
     updatedBy
-  });
+  }, conn);
 
   return {
     recordId: `${targetId}_${input.dateKey}`,
@@ -706,6 +706,8 @@ const formatLeave = (row) => {
     reason: row.reason,
     status: row.status.toLowerCase(),
     appliedAt: String(row.created_at).slice(0, 10),
+    decidedAt: row.decided_at ? dateIso(row.decided_at) : undefined,
+    decidedBy: row.decided_by ? String(row.decided_by) : undefined,
     adminRemarks: row.admin_remarks
   };
 };
@@ -723,10 +725,25 @@ const getLeaveRequests = async (status = 'all') => {
   };
 };
 
-const applyLeave = async (input, userId) => {
+const getStaffLeaveRequests = async (userId, status = 'all') => {
+  const staff = await projectModel.getStaffByUserId(userId);
+  if (!staff) throw ApiError.forbidden('Only a registered staff member can view their leave requests.');
+  const data = await projectModel.listLeaveRequests(status, staff.id);
+  return {
+    counts: {
+      all: Number(data.counts.all_count || 0),
+      pending: Number(data.counts.pending_count || 0),
+      approved: Number(data.counts.approved_count || 0),
+      rejected: Number(data.counts.rejected_count || 0)
+    },
+    leaves: data.leaves.map(formatLeave)
+  };
+};
+
+const applyLeave = async (input, userId, conn = null) => {
   const staff = await projectModel.getStaffByUserId(userId);
   if (!staff) throw ApiError.forbidden('Only a registered staff member can apply for leave.');
-  const result = await projectModel.createLeaveRequest({ ...input, staffId: staff.id });
+  const result = await projectModel.createLeaveRequest({ ...input, staffId: staff.id }, conn);
   if (result.conflict) {
     throw new ApiError(409, 'குறிப்பிட்ட தேதிகளில் ஏற்கனவே மற்றொரு விடுப்பு விண்ணப்பம் பதிவில் உள்ளது.', true, {
       dateRange: 'You already have an active leave request covering these dates.'
@@ -746,13 +763,13 @@ const applyLeave = async (input, userId) => {
   };
 };
 
-const decideLeave = async ({ leaveId, decision, adminRemarks }, user) => {
+const decideLeave = async ({ leaveId, decision, adminRemarks }, user, conn = null) => {
   const row = await projectModel.decideLeaveRequest({
     leaveId,
     decision,
     remarks: adminRemarks,
     decidedBy: user.id
-  });
+  }, conn);
   if (!row) throw new ApiError(409, 'Leave request is not pending.');
   return {
     leaveId: String(row.id),
@@ -813,10 +830,10 @@ const getStaffDashboard = async (userId) => {
   };
 };
 
-const completeEvent = async ({ eventId, completionNotes }, userId) => {
+const completeEvent = async ({ eventId, completionNotes }, userId, conn = null) => {
   const staff = await projectModel.getStaffByUserId(userId);
   if (!staff) throw ApiError.forbidden('Only registered staff can complete an event.');
-  const row = await projectModel.completeEvent({ eventId, staffId: staff.id, notes: completionNotes });
+  const row = await projectModel.completeEvent({ eventId, staffId: staff.id, notes: completionNotes }, conn);
   if (!row) throw ApiError.notFound('Assigned event was not found or is already completed.');
   return {
     eventId: String(row.id),
@@ -875,12 +892,12 @@ const updateAdminProfile = async (input, userId) => {
   };
 };
 
-const recordBookingPayment = async (input, userId) => {
+const recordBookingPayment = async (input, userId, conn = null) => {
   const result = await projectModel.recordBookingPayment({
     ...input,
     party: input.party.toUpperCase(),
     createdBy: userId
-  });
+  }, conn);
   if (result.notFound) throw ApiError.notFound('Booking not found.');
   if (result.exceedsBalance) {
     throw ApiError.unprocessable('Payment exceeds the outstanding balance.', {
@@ -940,6 +957,7 @@ module.exports = {
   getStaffMonthlyAttendance,
   submitAttendance,
   getLeaveRequests,
+  getStaffLeaveRequests,
   applyLeave,
   decideLeave,
   getStaffDashboard,

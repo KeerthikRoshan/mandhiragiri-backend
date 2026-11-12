@@ -95,6 +95,14 @@ const resolveRecipientsForEvent = async (eventType, context = {}) => {
       // Notify Administrators
       const adminIds = await notificationModel.resolveActiveAdminUserIds();
       adminIds.forEach((id) => recipientSet.add(id));
+
+      // Notify the specific assigned Priest or Assistant if provided
+      if (context.priestId) {
+        const assignedUserId = await notificationModel.resolveBookingAssignedStaffUserId(context.priestId);
+        if (assignedUserId) {
+          recipientSet.add(assignedUserId);
+        }
+      }
       break;
     }
 
@@ -159,12 +167,20 @@ const resolveRecipientsForEvent = async (eventType, context = {}) => {
       break;
     }
 
+    case NOTIFICATION_EVENTS.ATTENDANCE_ALERT: {
+      // Notify all active Administrators
+      const adminIds = await notificationModel.resolveActiveAdminUserIds();
+      adminIds.forEach((id) => recipientSet.add(id));
+      break;
+    }
+
     case NOTIFICATION_EVENTS.PAYMENT_UPDATED: {
-      // Notify Administrators + assigned Priest if applicable
+      // Notify Administrators
       const adminIds = await notificationModel.resolveActiveAdminUserIds();
       adminIds.forEach((id) => recipientSet.add(id));
 
-      if (context.priestId) {
+      // For Priest remuneration, also notify assigned Priest. Customers NEVER receive notifications.
+      if (context.party !== 'CLIENT' && context.priestId) {
         const assignedUserId = await notificationModel.resolveBookingAssignedStaffUserId(context.priestId);
         if (assignedUserId) {
           recipientSet.add(assignedUserId);

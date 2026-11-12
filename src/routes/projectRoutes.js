@@ -25,11 +25,15 @@ router.get('/attendance/:staffId/monthly', ...adminOrStaff, validation.validateM
 router.post('/attendance/self', ...staffOnly, validation.validateAttendanceSelf, controller.submitAttendance);
 router.get('/leaves/admin/all', ...adminOnly, validation.validateLeaveList, controller.allLeaveRequests);
 router.post('/leaves/admin/:leaveId/decision', ...adminOnly, validation.validateLeaveDecision, controller.decideLeave);
+router.get('/staff/me/leaves', ...staffOnly, validation.validateLeaveList, controller.myLeaveRequests);
 router.post('/staff/me/leaves', ...staffOnly, validation.validateLeaveApplication, controller.applyLeave);
 router.get('/staff/me/dashboard', ...staffOnly, controller.staffDashboard);
 router.post('/events/:eventId/complete', ...staffOnly, validation.validateEventCompletion, controller.completeEvent);
+router.put('/events/:eventId/complete', ...staffOnly, validation.validateEventCompletion, controller.completeEvent);
 router.get('/admin/profile', ...adminOnly, controller.adminProfile);
 router.put('/admin/profile', ...adminOnly, validation.validateAdminProfile, controller.updateAdminProfile);
+router.get('/profile/admin', ...adminOnly, controller.adminProfile);
+router.put('/profile/admin', ...adminOnly, validation.validateAdminProfile, controller.updateAdminProfile);
 router.post('/admin/profile/image', ...adminOnly, uploadSingleImage, controller.uploadAdminAvatar);
 router.post('/admin/staff/:staffId/image', ...adminOnly, validation.validateStaffAvatar, uploadSingleImage, controller.uploadStaffAvatar);
 router.get('/reports/balances', ...adminOnly, validation.validateBalanceReport, controller.balanceReport);
