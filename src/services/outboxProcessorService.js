@@ -22,27 +22,39 @@ const { NOTIFICATION_EVENTS } = require('../constants/notificationConstants');
 const generateBilingualContent = (eventType, payload = {}) => {
   const bNum = payload.bookingNumber || payload.bookingId || '';
   const title = payload.title || 'Pooja/Event';
+  const clientName = payload.clientName || '';
   const dateKey = payload.dateKey || '';
   const timeSlot = payload.timeSlot || payload.startTime || '';
-  const priestName = payload.priestName || 'Priest';
+  const priestName = payload.staffNameEn || payload.priestName || 'Priest';
+  const priestNameTa = payload.staffNameTa || payload.priestName || 'குருக்கள்';
   const staffId = payload.staffId || '';
+  const staffName = payload.staffNameEn || payload.staffName || '';
+  const staffNameTa = payload.staffNameTa || payload.staffName || '';
 
   switch (eventType) {
     case NOTIFICATION_EVENTS.BOOKING_CREATED:
       return {
         titleEn: 'New Booking Created',
-        bodyEn: `Booking #${bNum} (${title}) has been created for ${dateKey} at ${timeSlot}.`,
-        titleTa: 'புதிய முன்பதிவு உருவாக்கப்பட்டது',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) ${dateKey} அன்று ${timeSlot} மணிக்கு பதிவு செய்யப்பட்டுள்ளது.`,
+        bodyEn: clientName
+          ? `New booking created for ${clientName}: ${title} on ${dateKey} at ${timeSlot}.`
+          : `Booking #${bNum} (${title}) has been created for ${dateKey} at ${timeSlot}.`,
+        titleTa: 'புதிய முன்பதிவு பதிவு செய்யப்பட்டது',
+        bodyTa: clientName
+          ? `${clientName} என்பவருக்கான ${title} முன்பதிவு ${dateKey} அன்று ${timeSlot} மணிக்கு பதிவு செய்யப்பட்டுள்ளது.`
+          : `முன்பதிவு #${bNum} (${title}) ${dateKey} அன்று ${timeSlot} மணிக்கு பதிவு செய்யப்பட்டுள்ளது.`,
         priority: 'normal'
       };
 
     case NOTIFICATION_EVENTS.BOOKING_ASSIGNED:
       return {
         titleEn: 'Booking Assigned',
-        bodyEn: `Booking #${bNum} (${title}) on ${dateKey} has been assigned to ${priestName}.`,
-        titleTa: 'முன்பதிவு ஒதுக்கப்பட்டது',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) ${dateKey} அன்று ${priestName} அவர்களுக்கு ஒதுக்கப்பட்டுள்ளது.`,
+        bodyEn: clientName
+          ? `${clientName}'s ${title} booking on ${dateKey} has been assigned to ${priestName}.`
+          : `Booking #${bNum} (${title}) on ${dateKey} has been assigned to ${priestName}.`,
+        titleTa: 'முன்பதிவு பணிக்கப்பட்டது',
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு ${dateKey} அன்று ${priestNameTa} அவர்களுக்கு பணிக்கப்பட்டுள்ளது.`
+          : `முன்பதிவு #${bNum} (${title}) ${dateKey} அன்று ${priestNameTa} அவர்களுக்கு ஒதுக்கப்பட்டுள்ளது.`,
         priority: 'normal'
       };
 
@@ -51,9 +63,13 @@ const generateBilingualContent = (eventType, payload = {}) => {
       const newTime = payload.timeSlot || payload.newStartTime || payload.startTime || '';
       return {
         titleEn: 'Booking Rescheduled',
-        bodyEn: `Booking #${bNum} (${title}) has been rescheduled to ${newDate} at ${newTime}.`,
+        bodyEn: clientName
+          ? `${clientName}'s ${title} booking has been rescheduled to ${newDate} at ${newTime}.`
+          : `Booking #${bNum} (${title}) has been rescheduled to ${newDate} at ${newTime}.`,
         titleTa: 'முன்பதிவு தேதி மாற்றப்பட்டது',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) ${newDate} அன்று ${newTime} மணிக்கு மாற்றப்பட்டுள்ளது.`,
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு ${newDate} அன்று ${newTime} மணிக்கு மாற்றப்பட்டுள்ளது.`
+          : `முன்பதிவு #${bNum} (${title}) ${newDate} அன்று ${newTime} மணிக்கு மாற்றப்பட்டுள்ளது.`,
         priority: 'high'
       };
     }
@@ -61,20 +77,91 @@ const generateBilingualContent = (eventType, payload = {}) => {
     case NOTIFICATION_EVENTS.BOOKING_CANCELLED:
       return {
         titleEn: 'Booking Cancelled',
-        bodyEn: `Booking #${bNum} (${title}) scheduled for ${dateKey} has been cancelled.`,
+        bodyEn: clientName
+          ? `${clientName}'s ${title} booking scheduled for ${dateKey} has been cancelled.`
+          : `Booking #${bNum} (${title}) scheduled for ${dateKey} has been cancelled.`,
         titleTa: 'முன்பதிவு ரத்து செய்யப்பட்டது',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) (${dateKey}) ரத்து செய்யப்பட்டுள்ளது.`,
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு (${dateKey}) ரத்து செய்யப்பட்டுள்ளது.`
+          : `முன்பதிவு #${bNum} (${title}) (${dateKey}) ரத்து செய்யப்பட்டுள்ளது.`,
         priority: 'high'
       };
 
-    case NOTIFICATION_EVENTS.BOOKING_COMPLETED:
+    case NOTIFICATION_EVENTS.BOOKING_COMPLETED: {
+      const bTitle = title || 'Pooja';
+      const bodyEn = clientName
+        ? `${clientName}'s ${bTitle} booking has been completed by ${priestName}.`
+        : `Booking #${bNum} (${bTitle}) has been completed by ${priestName}.`;
+
+      const bodyTa = clientName
+        ? `${clientName} என்பவரின் ${bTitle} பதிவு ${priestNameTa} அவர்களால் நிறைவு செய்யப்பட்டது.`
+        : `முன்பதிவு #${bNum} (${bTitle}) ${priestNameTa} அவர்களால் நிறைவு செய்யப்பட்டது.`;
+
       return {
         titleEn: 'Booking Completed',
-        bodyEn: `Booking #${bNum} (${title}) has been marked as completed.`,
-        titleTa: 'முன்பதிவு நிறைவடைந்தது',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) வெற்றிகரமாக நிறைவடைந்தது.`,
+        bodyEn,
+        titleTa: 'பதிவு நிறைவு செய்யப்பட்டது',
+        bodyTa,
+        priority: 'high'
+      };
+    }
+
+    case 'BOOKING_UPDATED':
+      return {
+        titleEn: 'Booking Updated',
+        bodyEn: clientName
+          ? `Details for ${clientName}'s ${title} booking have been updated.`
+          : `Booking #${bNum} (${title}) details have been updated.`,
+        titleTa: 'முன்பதிவு விவரம் மாற்றப்பட்டது',
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு விவரங்கள் புதுப்பிக்கப்பட்டுள்ளன.`
+          : `முன்பதிவு #${bNum} (${title}) விவரங்கள் புதுப்பிக்கப்பட்டுள்ளன.`,
         priority: 'normal'
       };
+
+    case 'CLIENT_ADVANCE_RECEIVED': {
+      const amount = payload.amount !== undefined ? `₹${payload.amount}` : '';
+      return {
+        titleEn: 'Client Advance Received',
+        bodyEn: `Advance payment of ${amount} received for ${clientName ? `${clientName}'s ${title}` : `booking #${bNum} (${title})`}.`,
+        titleTa: 'வாடிக்கையாளர் முன்பணம் பெறப்பட்டது',
+        bodyTa: `${clientName ? `${clientName} என்பவரின் ${title}` : `முன்பதிவு #${bNum} (${title})`}-க்கான முன்பணம் ${amount} பெறப்பட்டது.`,
+        priority: 'normal'
+      };
+    }
+
+    case 'CLIENT_PAYMENT_UPDATED': {
+      const amount = payload.amount !== undefined ? `₹${payload.amount}` : '';
+      return {
+        titleEn: 'Client Payment Updated',
+        bodyEn: `Client payment for ${clientName ? `${clientName}'s ${title}` : `booking #${bNum}`} updated: ${amount} (${payload.updatedPaymentStatus || payload.status || 'Updated'}).`,
+        titleTa: 'வாடிக்கையாளர் கட்டணம் புதுப்பிக்கப்பட்டது',
+        bodyTa: `${clientName ? `${clientName} என்பவரின் ${title}` : `முன்பதிவு #${bNum}`} வாடிக்கையாளர் கட்டணம் புதுப்பிக்கப்பட்டது: ${amount}.`,
+        priority: 'normal'
+      };
+    }
+
+    case 'PRIEST_ADVANCE_PAID': {
+      const amount = payload.amount !== undefined ? `₹${payload.amount}` : '';
+      return {
+        titleEn: 'Priest Advance Paid',
+        bodyEn: `Advance of ${amount} paid to ${priestName} for booking #${bNum} (${title}).`,
+        titleTa: 'குருக்கள் முன்பணம் வழங்கப்பட்டது',
+        bodyTa: `முன்பதிவு #${bNum} (${title}) பூஜைக்காக குருக்கள் ${priestNameTa} அவர்களுக்கு முன்பணம் ${amount} வழங்கப்பட்டது.`,
+        priority: 'normal'
+      };
+    }
+
+    case 'PRIEST_REMUNERATION_UPDATED': {
+      const amount = payload.amount !== undefined ? `₹${payload.amount}` : '';
+      return {
+        titleEn: 'Priest Remuneration Updated',
+        bodyEn: `Remuneration for ${priestName} on booking #${bNum} (${title}) updated: ${amount}.`,
+        titleTa: 'குருக்கள் ஊதியம் புதுப்பிக்கப்பட்டது',
+        bodyTa: `முன்பதிவு #${bNum} (${title}) பூஜைக்காக குருக்கள் ${priestNameTa} ஊதியம் ${amount} என புதுப்பிக்கப்பட்டது.`,
+        priority: 'normal'
+      };
+    }
 
     case NOTIFICATION_EVENTS.PAYMENT_UPDATED: {
       const party = payload.party === 'CLIENT' ? 'Client' : 'Priest';
@@ -82,9 +169,9 @@ const generateBilingualContent = (eventType, payload = {}) => {
       const amount = payload.amount !== undefined ? `₹${payload.amount}` : '';
       return {
         titleEn: 'Payment Status Updated',
-        bodyEn: `Payment for booking #${bNum} has been updated: ${party} payment of ${amount} (${payload.updatedPaymentStatus || 'Updated'}).`,
+        bodyEn: `Payment for booking #${bNum} (${title}) has been updated: ${party} payment of ${amount} (${payload.updatedPaymentStatus || 'Updated'}).`,
         titleTa: 'கட்டண விவரம் புதுப்பிக்கப்பட்டது',
-        bodyTa: `முன்பதிவு #${bNum} கட்டண விவரம் புதுப்பிக்கப்பட்டது: ${partyTa} தொகை ${amount}.`,
+        bodyTa: `முன்பதிவு #${bNum} (${title}) கட்டண விவரம் புதுப்பிக்கப்பட்டது: ${partyTa} தொகை ${amount}.`,
         priority: 'normal'
       };
     }
@@ -92,18 +179,18 @@ const generateBilingualContent = (eventType, payload = {}) => {
     case NOTIFICATION_EVENTS.ATTENDANCE_ALERT:
       return {
         titleEn: 'Attendance Alert',
-        bodyEn: `Staff attendance alert: Staff #${staffId} marked as ${payload.status || 'ABSENT'} for ${dateKey}.`,
+        bodyEn: `Staff attendance alert: ${staffName || `Staff #${staffId}`} marked as ${payload.status || 'ABSENT'} for ${dateKey}.`,
         titleTa: 'வருகை விழிப்புணர்வு எச்சரிக்கை',
-        bodyTa: `ஊழியர் #${staffId} ${dateKey} அன்று ${payload.status === 'ABSENT' ? 'வராதவராக' : 'விடுப்பில்'} பதிவு செய்யப்பட்டுள்ளார்.`,
+        bodyTa: `ஊழியர் ${staffNameTa || `#${staffId}`} ${dateKey} அன்று ${payload.status === 'ABSENT' ? 'வராதவராக' : 'விடுப்பில்'} பதிவு செய்யப்பட்டுள்ளார்.`,
         priority: 'high'
       };
 
     case NOTIFICATION_EVENTS.LEAVE_REQUESTED:
       return {
         titleEn: 'New Leave Request',
-        bodyEn: `Staff #${staffId} has submitted a ${payload.leaveType || 'leave'} request from ${payload.startDate} to ${payload.endDate}.`,
+        bodyEn: `${staffName || `Staff #${staffId}`} has submitted a ${payload.leaveType || 'leave'} request from ${payload.startDate} to ${payload.endDate}.`,
         titleTa: 'புதிய விடுப்பு விண்ணப்பம்',
-        bodyTa: `ஊழியர் #${staffId} ${payload.startDate} முதல் ${payload.endDate} வரை ${payload.leaveType || 'விடுப்பு'} விண்ணப்பித்துள்ளார்.`,
+        bodyTa: `ஊழியர் ${staffNameTa || `#${staffId}`} ${payload.startDate} முதல் ${payload.endDate} வரை ${payload.leaveType || 'விடுப்பு'} விண்ணப்பித்துள்ளார்.`,
         priority: 'normal'
       };
 
@@ -128,27 +215,39 @@ const generateBilingualContent = (eventType, payload = {}) => {
     case 'BOOKING_24H_REMINDER':
       return {
         titleEn: 'Booking Reminder (24 Hours)',
-        bodyEn: `Booking #${bNum} (${title}) is scheduled for tomorrow (${dateKey}) at ${timeSlot}.`,
+        bodyEn: clientName
+          ? `${clientName}'s ${title} booking is scheduled for tomorrow (${dateKey}) at ${timeSlot}.`
+          : `Booking #${bNum} (${title}) is scheduled for tomorrow (${dateKey}) at ${timeSlot}.`,
         titleTa: 'முன்பதிவு நினைவூட்டல் (24 மணி நேரம்)',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) நாளை (${dateKey}) ${timeSlot} மணிக்கு தொடங்க உள்ளது.`,
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு நாளை (${dateKey}) ${timeSlot} மணிக்கு தொடங்க உள்ளது.`
+          : `முன்பதிவு #${bNum} (${title}) நாளை (${dateKey}) ${timeSlot} மணிக்கு தொடங்க உள்ளது.`,
         priority: 'high'
       };
 
     case 'BOOKING_1H_REMINDER':
       return {
         titleEn: 'Booking Reminder (1 Hour)',
-        bodyEn: `Booking #${bNum} (${title}) begins in 1 hour at ${timeSlot}.`,
+        bodyEn: clientName
+          ? `${clientName}'s ${title} booking begins in 1 hour at ${timeSlot}.`
+          : `Booking #${bNum} (${title}) begins in 1 hour at ${timeSlot}.`,
         titleTa: 'முன்பதிவு நினைவூட்டல் (1 மணி நேரம்)',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) இன்னும் 1 மணி நேரத்தில் ${timeSlot} மணிக்கு தொடங்க உள்ளது.`,
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு இன்னும் 1 மணி நேரத்தில் (${timeSlot}) தொடங்க உள்ளது.`
+          : `முன்பதிவு #${bNum} (${title}) இன்னும் 1 மணி நேரத்தில் ${timeSlot} மணிக்கு தொடங்க உள்ளது.`,
         priority: 'urgent'
       };
 
     case 'BOOKING_5M_REMINDER':
       return {
         titleEn: 'Booking Reminder (5 Minutes)',
-        bodyEn: `Booking #${bNum} (${title}) begins in 5 minutes at ${timeSlot}. Please be prepared.`,
+        bodyEn: clientName
+          ? `${clientName}'s ${title} booking begins in 5 minutes at ${timeSlot}. Please be prepared.`
+          : `Booking #${bNum} (${title}) begins in 5 minutes at ${timeSlot}. Please be prepared.`,
         titleTa: 'முன்பதிவு நினைவூட்டல் (5 நிமிடங்கள்)',
-        bodyTa: `முன்பதிவு #${bNum} (${title}) இன்னும் 5 நிமிடங்களில் ${timeSlot} மணிக்கு தொடங்க உள்ளது. தயாராக இருக்கவும்.`,
+        bodyTa: clientName
+          ? `${clientName} என்பவரின் ${title} முன்பதிவு இன்னும் 5 நிமிடங்களில் (${timeSlot}) தொடங்க உள்ளது. தயாராக இருக்கவும்.`
+          : `முன்பதிவு #${bNum} (${title}) இன்னும் 5 நிமிடங்களில் ${timeSlot} மணிக்கு தொடங்க உள்ளது. தயாராக இருக்கவும்.`,
         priority: 'urgent'
       };
 
@@ -156,9 +255,9 @@ const generateBilingualContent = (eventType, payload = {}) => {
     case NOTIFICATION_EVENTS.ATTENDANCE_REMINDER:
       return {
         titleEn: 'Attendance Check Reminder',
-        bodyEn: 'Please remember to mark your attendance for today.',
+        bodyEn: 'Please remember to mark your attendance for today in the Staff Portal.',
         titleTa: 'வருகை பதிவு நினைவூட்டல்',
-        bodyTa: 'இன்றைய தினத்திற்கான வருகையை பதிவு செய்யவும்.',
+        bodyTa: 'இன்றைய தினத்திற்கான வருகைப் பதிவை ஊழியர் பக்கத்தில் பதிவு செய்யவும்.',
         priority: 'normal'
       };
 

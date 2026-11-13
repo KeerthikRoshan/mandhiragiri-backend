@@ -22,6 +22,21 @@ const deviceModel = require('../src/models/deviceModel');
 
 describe('Notification Management System Tests (Phase 2)', () => {
   describe('Constants and Idempotency Key Generator', () => {
+    it('normalizes SQL and Date timestamps to strict UTC ISO 8601 strings', () => {
+      const sqlTime = '2026-11-13 17:35:10';
+      const iso = notificationModel.toUtcIso(sqlTime);
+      assert.equal(iso, '2026-11-13T17:35:10.000Z');
+
+      const alreadyIso = '2026-11-13T17:35:10.000Z';
+      assert.equal(notificationModel.toUtcIso(alreadyIso), '2026-11-13T17:35:10.000Z');
+
+      const dateObj = new Date('2026-11-13T17:35:10.000Z');
+      assert.equal(notificationModel.toUtcIso(dateObj), '2026-11-13T17:35:10.000Z');
+
+      assert.equal(notificationModel.toUtcIso(null), null);
+      assert.equal(notificationModel.toUtcIso(undefined), null);
+    });
+
     it('contains all core event types', () => {
       assert.equal(ALL_EVENT_TYPES.length, 13);
       assert.ok(ALL_EVENT_TYPES.includes('BOOKING_CREATED'));
@@ -223,6 +238,82 @@ describe('Notification Management System Tests (Phase 2)', () => {
           { priestId: 5 }
         );
         assert.deepEqual(recipients.sort((a, b) => a - b), [1, 2, 15]);
+      } finally {
+        restoreMocks();
+      }
+    });
+
+    it('BOOKING_COMPLETED and BOOKING_UPDATED notify Admins and assigned Priest', async () => {
+      notificationModel.resolveActiveAdminUserIds = async () => [1, 2];
+      notificationModel.resolveBookingAssignedStaffUserId = async (priestId) => {
+        return priestId === 5 ? 15 : null;
+      };
+
+      try {
+        const completedRecipients = await notificationService.resolveRecipientsForEvent(
+          NOTIFICATION_EVENTS.BOOKING_COMPLETED,
+          { priestId: 5 }
+        );
+        assert.deepEqual(completedRecipients.sort((a, b) => a - b), [1, 2, 15]);
+
+        const updatedRecipients = await notificationService.resolveRecipientsForEvent(
+          'BOOKING_UPDATED',
+          { priestId: 5 }
+        );
+        assert.deepEqual(updatedRecipients.sort((a, b) => a - b), [1, 2, 15]);
+      } finally {
+        restoreMocks();
+      }
+    });
+
+    it('Time-based reminders (24H, 1H, 5M) notify Admins and assigned Priest', async () => {
+      notificationModel.resolveActiveAdminUserIds = async () => [1, 2];
+      notificationModel.resolveBookingAssignedStaffUserId = async (priestId) => {
+        return priestId === 9 ? 29 : null;
+      };
+
+      try {
+        for (const remEvent of ['BOOKING_24H_REMINDER', 'BOOKING_1H_REMINDER', 'BOOKING_5M_REMINDER']) {
+          const recs = await notificationService.resolveRecipientsForEvent(remEvent, { priestId: 9 });
+          assert.deepEqual(recs.sort((a, b) => a - b), [1, 2, 29]);
+        }
+      } finally {
+        restoreMocks();
+      }
+    });
+
+    it('Payment events: CLIENT advances notify Admins ONLY; PRIEST remuneration notifies Admins + Priest', async () => {
+      notificationModel.resolveActiveAdminUserIds = async () => [1, 2];
+      notificationModel.resolveBookingAssignedStaffUserId = async (priestId) => {
+        return priestId === 9 ? 29 : null;
+      };
+
+      try {
+        // Client advance / payment update: Admin only
+        const clientAdvanceRecs = await notificationService.resolveRecipientsForEvent(
+          'CLIENT_ADVANCE_RECEIVED',
+          { priestId: 9, customerPhone: '9876543210' }
+        );
+        assert.deepEqual(clientAdvanceRecs.sort((a, b) => a - b), [1, 2]);
+
+        const clientPaymentRecs = await notificationService.resolveRecipientsForEvent(
+          'CLIENT_PAYMENT_UPDATED',
+          { priestId: 9 }
+        );
+        assert.deepEqual(clientPaymentRecs.sort((a, b) => a - b), [1, 2]);
+
+        // Priest advance / remuneration: Admins + Priest
+        const priestAdvanceRecs = await notificationService.resolveRecipientsForEvent(
+          'PRIEST_ADVANCE_PAID',
+          { priestId: 9, party: 'PRIEST' }
+        );
+        assert.deepEqual(priestAdvanceRecs.sort((a, b) => a - b), [1, 2, 29]);
+
+        const priestRemunRecs = await notificationService.resolveRecipientsForEvent(
+          'PRIEST_REMUNERATION_UPDATED',
+          { priestId: 9, party: 'PRIEST' }
+        );
+        assert.deepEqual(priestRemunRecs.sort((a, b) => a - b), [1, 2, 29]);
       } finally {
         restoreMocks();
       }

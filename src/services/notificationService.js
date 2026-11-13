@@ -106,10 +106,28 @@ const resolveRecipientsForEvent = async (eventType, context = {}) => {
       break;
     }
 
+    case 'BOOKING_UPDATED':
     case NOTIFICATION_EVENTS.BOOKING_ASSIGNED:
     case NOTIFICATION_EVENTS.BOOKING_RESCHEDULED:
     case NOTIFICATION_EVENTS.BOOKING_CANCELLED:
     case NOTIFICATION_EVENTS.BOOKING_COMPLETED: {
+      // Notify Administrators
+      const adminIds = await notificationModel.resolveActiveAdminUserIds();
+      adminIds.forEach((id) => recipientSet.add(id));
+
+      // Notify the specific assigned Priest or Assistant
+      if (context.priestId) {
+        const assignedUserId = await notificationModel.resolveBookingAssignedStaffUserId(context.priestId);
+        if (assignedUserId) {
+          recipientSet.add(assignedUserId);
+        }
+      }
+      break;
+    }
+
+    case 'BOOKING_24H_REMINDER':
+    case 'BOOKING_1H_REMINDER':
+    case 'BOOKING_5M_REMINDER': {
       // Notify Administrators
       const adminIds = await notificationModel.resolveActiveAdminUserIds();
       adminIds.forEach((id) => recipientSet.add(id));
@@ -174,12 +192,22 @@ const resolveRecipientsForEvent = async (eventType, context = {}) => {
       break;
     }
 
+    case 'CLIENT_ADVANCE_RECEIVED':
+    case 'CLIENT_PAYMENT_UPDATED': {
+      // Notify Administrators ONLY - Customers NEVER receive internal notifications, Staff does not see client finances
+      const adminIds = await notificationModel.resolveActiveAdminUserIds();
+      adminIds.forEach((id) => recipientSet.add(id));
+      break;
+    }
+
+    case 'PRIEST_ADVANCE_PAID':
+    case 'PRIEST_REMUNERATION_UPDATED':
     case NOTIFICATION_EVENTS.PAYMENT_UPDATED: {
       // Notify Administrators
       const adminIds = await notificationModel.resolveActiveAdminUserIds();
       adminIds.forEach((id) => recipientSet.add(id));
 
-      // For Priest remuneration, also notify assigned Priest. Customers NEVER receive notifications.
+      // For Priest remuneration/advances, also notify assigned Priest. Customers NEVER receive notifications.
       if (context.party !== 'CLIENT' && context.priestId) {
         const assignedUserId = await notificationModel.resolveBookingAssignedStaffUserId(context.priestId);
         if (assignedUserId) {

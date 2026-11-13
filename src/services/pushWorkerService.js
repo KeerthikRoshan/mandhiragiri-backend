@@ -206,22 +206,30 @@ const processSinglePushJob = async (job, { workerLeaseToken, fcmClient = messagi
   // 4. Dispatch FCM to each pending device
   let fcmAcceptedCount = 0;
   let lastErrorMessage = null;
-  const isUrgentReminder = job.event_type === 'BOOKING_5M_REMINDER' || job.event_type === 'BOOKING_1H_REMINDER';
-  const channelId = isUrgentReminder ? 'mandhiragiri_reminder_channel' : 'mandhiragiri_default_channel';
+  const isUrgent = job.event_type === 'BOOKING_5M_REMINDER' || job.event_type === 'BOOKING_1H_REMINDER' || job.event_type === 'BOOKING_COMPLETED';
+  const channelId = isUrgent ? 'mandhiragiri_reminder_channel' : 'mandhiragiri_default_channel';
 
   for (const delivery of pendingDeliveries) {
     const message = {
       token: delivery.fcm_token,
       notification: {
-        title: job.title_ta || job.title_en || 'Mandhiragiri Jothidam',
-        body: job.body_ta || job.body_en || 'Notification'
+        title: job.title_en || job.title_ta || 'Mandhiragiri Jothidam',
+        body: job.body_en || job.body_ta || 'Notification'
       },
       data: {
         notificationId: String(job.notification_id || ''),
         eventType: String(job.event_type || ''),
+        type: String(job.event_type || ''),
         entityType: String(job.entity_type || ''),
         entityId: String(job.entity_id || ''),
         bookingId: String(job.entity_id || ''),
+        eventId: String(job.entity_id || ''),
+        title: String(job.title_en || job.title_ta || ''),
+        body: String(job.body_en || job.body_ta || ''),
+        titleEn: String(job.title_en || ''),
+        bodyEn: String(job.body_en || ''),
+        titleTa: String(job.title_ta || ''),
+        bodyTa: String(job.body_ta || ''),
         reminderType: String(job.event_type || ''),
         correlationId: String(correlationId || '')
       },
@@ -230,7 +238,7 @@ const processSinglePushJob = async (job, { workerLeaseToken, fcmClient = messagi
         notification: {
           channelId,
           sound: 'default',
-          priority: isUrgentReminder ? 'max' : 'high',
+          priority: isUrgent ? 'max' : 'high',
           defaultSound: true,
           defaultVibrateTimings: true
         }

@@ -282,6 +282,16 @@ const getFinancialAuditTransactions = asyncHandler(async (req, res) => {
   return sendSuccess(res, 'Financial audit transactions retrieved successfully.', result, 200);
 });
 
+const getCompletedSettlements = asyncHandler(async (req, res) => {
+  const result = await bookingService.getCompletedSettlements(req.query);
+  return sendSuccess(res, 'Completed settlements retrieved successfully.', result, 200);
+});
+
+const completeSettlement = asyncHandler(async (req, res) => {
+  const result = await bookingService.completeSettlement(req.params.bookingId, req.body, req.user);
+  return sendSuccess(res, 'Settlement completed successfully.', result, 200);
+});
+
 /**
  * Development test booking helper for rapid 5-minute reminder verification
  * POST /api/v1/bookings/dev-test-reminder
@@ -361,5 +371,7 @@ module.exports = {
   listEventTypes,
   getFinancialAuditSummary,
   getPriestSettlements,
+  getCompletedSettlements,
+  completeSettlement,
   getFinancialAuditTransactions
 };

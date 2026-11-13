@@ -138,6 +138,7 @@ const staffMonthlyAttendance = asyncHandler(async (req, res) => {
       throw ApiError.forbidden('Staff profile not found or inactive.');
     }
     if (
+      String(targetStaffId).toLowerCase() !== 'me' &&
       String(targetStaffId) !== String(staff.id) &&
       String(targetStaffId) !== String(staff.staff_id)
     ) {

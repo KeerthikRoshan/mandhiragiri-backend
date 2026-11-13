@@ -2,6 +2,33 @@ const { pool } = require('../config/database');
 const { ALL_EVENT_TYPES, JOB_TYPES, JOB_STATUS, DELIVERY_STATUS } = require('../constants/notificationConstants');
 
 /**
+ * Ensures a database timestamp is returned as a strict UTC ISO 8601 string.
+ * Since the MariaDB session runs with SET time_zone = '+00:00', raw date strings
+ * from mysql2 (dateStrings: true) represent UTC.
+ * Appending 'Z' and formatting via Date.toISOString() guarantees timezone accuracy across all clients.
+ *
+ * @param {string|Date|null} val
+ * @returns {string|null}
+ */
+const toUtcIso = (val) => {
+  if (!val) return null;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    if (trimmed.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+      const d = new Date(trimmed);
+      return isNaN(d.getTime()) ? val : d.toISOString();
+    }
+    // Convert 'YYYY-MM-DD HH:mm:ss' to ISO UTC 'YYYY-MM-DDTHH:mm:ssZ'
+    const normalized = trimmed.replace(' ', 'T') + 'Z';
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? val : d.toISOString();
+  }
+  return String(val);
+};
+
+/**
  * Notification Model for Mandhiragiri Jothidam (Phase 2)
  * Manages database persistence, durable job queueing, and independent recipient statuses.
  */
@@ -442,9 +469,9 @@ const listNotificationsForUser = async (userId, options = {}) => {
     data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data || {},
     priority: row.priority,
     isRead: Boolean(row.read_at),
-    readAt: row.read_at,
+    readAt: toUtcIso(row.read_at),
     deliveryStatus: row.delivery_status,
-    createdAt: row.created_at
+    createdAt: toUtcIso(row.created_at)
   }));
 
   return {
@@ -496,7 +523,7 @@ const markAsRead = async (notificationId, userId) => {
   return {
     id: Number(notificationId),
     isRead: true,
-    readAt: rows[0]?.read_at || new Date().toISOString(),
+    readAt: toUtcIso(rows[0]?.read_at) || new Date().toISOString(),
     affected: result.affectedRows > 0
   };
 };
@@ -795,6 +822,7 @@ module.exports = {
   resolveAllActiveStaffUserIds,
   resolveBookingAssignedStaffUserId,
   resolveStaffUserIdByStaffId,
-  retryFailedPushJob
+  retryFailedPushJob,
+  toUtcIso
 };
 

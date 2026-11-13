@@ -35,6 +35,7 @@ router.get('/priest/:priestId', ...adminOrStaff, bookingController.getPriestBook
 // 5. Financial Audits & Settlement Endpoints
 router.get('/financial-audits/summary', ...adminOnly, bookingController.getFinancialAuditSummary);
 router.get('/financial-audits/settlements', ...adminOnly, bookingController.getPriestSettlements);
+router.get('/financial-audits/completed-settlements', ...adminOnly, bookingController.getCompletedSettlements);
 router.get('/financial-audits/transactions', ...adminOnly, bookingController.getFinancialAuditTransactions);
 
 // 6. Booking Details, Update, Delete & Financials
@@ -42,6 +43,7 @@ router.get('/:bookingId', ...adminOrStaff, validateBookingId, bookingController.
 router.put('/:bookingId', ...adminOnly, validateBookingId, validateUpdateBooking, bookingController.updateBooking);
 router.delete('/:bookingId', ...adminOnly, validateBookingId, bookingController.deleteBooking);
 router.get('/:bookingId/balance', ...adminOnly, validateBookingId, bookingController.getBookingBalance);
+router.post('/:bookingId/settlement-complete', ...adminOnly, validateBookingId, bookingController.completeSettlement);
 
 // 7. Manual Cash Payments & Transactions
 router.post('/:bookingId/payments', ...adminOnly, validateBookingId, validatePayment, bookingController.recordPayment);

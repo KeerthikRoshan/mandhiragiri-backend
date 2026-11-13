@@ -1092,6 +1092,8 @@ const getClientReceivables = async (filters = {}) => {
 
 /**
  * Summarizes priest compensation and settlement balances.
+ * When filters.groupBy === 'priest', returns aggregate per priest.
+ * Otherwise, returns individual pending per-booking priest settlements.
  */
 const getPriestSettlements = async (filters = {}) => {
   let where = ['b.is_deleted = 0'];
@@ -1108,38 +1110,265 @@ const getPriestSettlements = async (filters = {}) => {
     params.push(filters.toDate);
   }
 
+  if (filters.groupBy === 'priest') {
+    const query = `
+      SELECT
+        b.priest_id,
+        b.priest_name,
+        s.name_tamil AS staff_name_tamil,
+        s.name_english AS staff_name_english,
+        s.phone AS staff_phone,
+        s.staff_role,
+        COUNT(b.id) AS booking_count,
+        COALESCE(SUM(b.priest_total_pay), 0) AS total_pay,
+        COALESCE(SUM(b.priest_advance_paid), 0) AS advance_paid,
+        COALESCE(SUM(b.priest_total_pay - b.priest_advance_paid), 0) AS balance_due
+      FROM bookings b
+      LEFT JOIN staff s ON (s.id = CAST(b.priest_id AS UNSIGNED) AND b.priest_id REGEXP '^[0-9]+$')
+      WHERE ${where.join(' AND ')}
+      GROUP BY b.priest_id, b.priest_name, s.name_tamil, s.name_english, s.phone, s.staff_role
+      ORDER BY balance_due DESC, total_pay DESC;
+    `;
+
+    const [rows] = await pool.query(query, params);
+    return rows.map(r => ({
+      priestId: String(r.priest_id),
+      priestName: r.staff_name_english || r.priest_name || 'சுவாமி',
+      priestNameTamil: r.staff_name_tamil || r.priest_name || 'சுவாமி',
+      phone: r.staff_phone || null,
+      staffRole: r.staff_role || 'priest',
+      bookingCount: Number(r.booking_count),
+      totalPay: Number(r.total_pay),
+      advancePaid: Number(r.advance_paid),
+      balanceDue: Number(r.balance_due),
+      settlementStatus: Number(r.balance_due) <= 0 && Number(r.total_pay) > 0 ? 'settled' : (Number(r.advance_paid) > 0 ? 'partial' : 'pending')
+    }));
+  }
+
+  // Per-booking pending settlements
+  const bookingWhere = [...where, 'b.priest_total_pay > 0', 'b.priest_payment_status != "paid"', '(b.priest_total_pay - b.priest_advance_paid) > 0'];
   const query = `
     SELECT
+      b.id,
+      b.booking_number,
+      CAST(b.date_key AS CHAR) AS date_key,
+      b.title,
       b.priest_id,
       b.priest_name,
       s.name_tamil AS staff_name_tamil,
       s.name_english AS staff_name_english,
       s.phone AS staff_phone,
       s.staff_role,
-      COUNT(b.id) AS booking_count,
-      COALESCE(SUM(b.priest_total_pay), 0) AS total_pay,
-      COALESCE(SUM(b.priest_advance_paid), 0) AS advance_paid,
-      COALESCE(SUM(b.priest_total_pay - b.priest_advance_paid), 0) AS balance_due
+      b.priest_total_pay AS total_pay,
+      b.priest_advance_paid AS advance_paid,
+      (b.priest_total_pay - b.priest_advance_paid) AS balance_due,
+      b.priest_payment_status
     FROM bookings b
     LEFT JOIN staff s ON (s.id = CAST(b.priest_id AS UNSIGNED) AND b.priest_id REGEXP '^[0-9]+$')
-    WHERE ${where.join(' AND ')}
-    GROUP BY b.priest_id, b.priest_name, s.name_tamil, s.name_english, s.phone, s.staff_role
-    ORDER BY balance_due DESC, total_pay DESC;
+    WHERE ${bookingWhere.join(' AND ')}
+    ORDER BY balance_due DESC, b.date_key ASC;
   `;
 
   const [rows] = await pool.query(query, params);
   return rows.map(r => ({
+    id: String(r.id),
+    bookingId: String(r.id),
+    bookingNumber: r.booking_number,
+    dateKey: r.date_key,
+    title: r.title,
     priestId: String(r.priest_id),
     priestName: r.staff_name_english || r.priest_name || 'சுவாமி',
     priestNameTamil: r.staff_name_tamil || r.priest_name || 'சுவாமி',
     phone: r.staff_phone || null,
     staffRole: r.staff_role || 'priest',
-    bookingCount: Number(r.booking_count),
+    bookingCount: 1,
     totalPay: Number(r.total_pay),
     advancePaid: Number(r.advance_paid),
     balanceDue: Number(r.balance_due),
     settlementStatus: Number(r.balance_due) <= 0 && Number(r.total_pay) > 0 ? 'settled' : (Number(r.advance_paid) > 0 ? 'partial' : 'pending')
   }));
+};
+
+/**
+ * Retrieves all completed financial settlements (both Priest Settlements and Client Receivables).
+ */
+const getCompletedSettlements = async (filters = {}) => {
+  let where = ['b.is_deleted = 0', '(b.client_payment_status = "paid" OR b.priest_payment_status = "paid")'];
+  const params = [];
+
+  if (filters.fromDate && filters.toDate) {
+    where.push('b.date_key BETWEEN ? AND ?');
+    params.push(filters.fromDate, filters.toDate);
+  } else if (filters.fromDate) {
+    where.push('b.date_key >= ?');
+    params.push(filters.fromDate);
+  } else if (filters.toDate) {
+    where.push('b.date_key <= ?');
+    params.push(filters.toDate);
+  }
+
+  const query = `
+    SELECT
+      b.id AS booking_id,
+      b.booking_number,
+      CAST(b.date_key AS CHAR) AS date_key,
+      b.title,
+      b.client_name,
+      b.client_phone,
+      b.priest_name,
+      b.total_event_charge,
+      b.client_total_received,
+      b.client_payment_status,
+      b.priest_total_pay,
+      b.priest_advance_paid,
+      b.priest_payment_status,
+      COALESCE(b.completed_at, b.updated_at) AS completed_at
+    FROM bookings b
+    WHERE ${where.join(' AND ')}
+    ORDER BY b.updated_at DESC;
+  `;
+
+  const [rows] = await pool.query(query, params);
+  const results = [];
+
+  for (const r of rows) {
+    // 1. Completed Client Receivable
+    if (r.client_payment_status === 'paid' && Number(r.total_event_charge) > 0) {
+      if (!filters.type || String(filters.type).toUpperCase() === 'CLIENT') {
+        results.push({
+          id: `client_${r.booking_id}`,
+          bookingId: String(r.booking_id),
+          bookingNumber: r.booking_number,
+          dateKey: r.date_key,
+          title: r.title,
+          settlementType: 'CLIENT',
+          personName: r.client_name || 'வாடிக்கையாளர்',
+          phone: r.client_phone || null,
+          totalAmount: Number(r.total_event_charge),
+          previouslyPaidAmount: Number(r.client_total_received),
+          finalSettledAmount: Number(r.total_event_charge),
+          completionDate: r.completed_at,
+          settlementStatus: 'completed'
+        });
+      }
+    }
+
+    // 2. Completed Priest Settlement
+    if (r.priest_payment_status === 'paid' && Number(r.priest_total_pay) > 0) {
+      if (!filters.type || String(filters.type).toUpperCase() === 'PRIEST') {
+        results.push({
+          id: `priest_${r.booking_id}`,
+          bookingId: String(r.booking_id),
+          bookingNumber: r.booking_number,
+          dateKey: r.date_key,
+          title: r.title,
+          settlementType: 'PRIEST',
+          personName: r.priest_name || 'புரோகிதர்',
+          phone: null,
+          totalAmount: Number(r.priest_total_pay),
+          previouslyPaidAmount: Number(r.priest_advance_paid),
+          finalSettledAmount: Number(r.priest_total_pay),
+          completionDate: r.completed_at,
+          settlementStatus: 'completed'
+        });
+      }
+    }
+  }
+
+  return results;
+};
+
+/**
+ * Marks a client receivable or priest settlement as completed in the database.
+ * If there is an outstanding balance, it records the final settlement transaction and sets status = 'paid'.
+ * Fully idempotent: if already settled, returns success safely.
+ */
+const completeSettlement = async ({ bookingId, party, notes, createdBy }, conn = null) => {
+  const isExternalConn = Boolean(conn);
+  const connection = conn || (await pool.getConnection());
+  try {
+    if (!isExternalConn) await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      'SELECT * FROM bookings WHERE id = ? AND is_deleted = 0 FOR UPDATE',
+      [bookingId]
+    );
+
+    if (!rows || rows.length === 0) {
+      if (!isExternalConn) await connection.rollback();
+      return { notFound: true };
+    }
+
+    const booking = rows[0];
+    const isClient = String(party).toUpperCase() === 'CLIENT';
+    let settledAmount = 0;
+
+    if (isClient) {
+      const currentTotal = Number(booking.total_event_charge || 0);
+      const currentReceived = Number(booking.client_total_received || 0);
+      const remainingBalance = Number((currentTotal - currentReceived).toFixed(2));
+
+      if (remainingBalance > 0) {
+        settledAmount = remainingBalance;
+        await connection.execute(`
+          INSERT INTO booking_transactions (booking_id, party, amount, payment_method, transaction_type, notes, created_by)
+          VALUES (?, 'CLIENT', ?, 'cash', 'ADDITIONAL_PAYMENT', ?, ?);
+        `, [bookingId, remainingBalance, notes || 'வாடிக்கையாளர் முழு தீர்வு (Client Settlement Completed)', createdBy || null]);
+
+        await connection.execute(`
+          UPDATE bookings
+          SET client_total_received = ?, client_payment_status = 'paid', updated_at = NOW()
+          WHERE id = ?;
+        `, [currentTotal, bookingId]);
+      } else {
+        await connection.execute(`
+          UPDATE bookings
+          SET client_payment_status = 'paid', updated_at = NOW()
+          WHERE id = ?;
+        `, [bookingId]);
+      }
+    } else {
+      const currentPay = Number(booking.priest_total_pay || 0);
+      const currentPaid = Number(booking.priest_advance_paid || 0);
+      const remainingBalance = Number((currentPay - currentPaid).toFixed(2));
+
+      if (remainingBalance > 0) {
+        settledAmount = remainingBalance;
+        const targetStaffId = booking.priest_id && !isNaN(booking.priest_id) ? Number(booking.priest_id) : null;
+        await connection.execute(`
+          INSERT INTO booking_transactions (booking_id, staff_id, party, amount, payment_method, transaction_type, notes, created_by)
+          VALUES (?, ?, 'PRIEST', ?, 'cash', 'ADDITIONAL_PAYMENT', ?, ?);
+        `, [bookingId, targetStaffId, remainingBalance, notes || 'புரோகிதர் முழு தீர்வு (Priest Settlement Completed)', createdBy || null]);
+
+        await connection.execute(`
+          UPDATE bookings
+          SET priest_advance_paid = ?, priest_payment_status = 'paid', updated_at = NOW()
+          WHERE id = ?;
+        `, [currentPay, bookingId]);
+      } else {
+        await connection.execute(`
+          UPDATE bookings
+          SET priest_payment_status = 'paid', updated_at = NOW()
+          WHERE id = ?;
+        `, [bookingId]);
+      }
+    }
+
+    if (!isExternalConn) await connection.commit();
+
+    return {
+      success: true,
+      bookingId: String(bookingId),
+      party: isClient ? 'CLIENT' : 'PRIEST',
+      settledAmount,
+      completedAt: new Date().toISOString()
+    };
+  } catch (err) {
+    if (!isExternalConn) await connection.rollback();
+    throw err;
+  } finally {
+    if (!isExternalConn) connection.release();
+  }
 };
 
 /**
@@ -1234,5 +1463,7 @@ module.exports = {
   getFinancialAuditSummary,
   getClientReceivables,
   getPriestSettlements,
+  getCompletedSettlements,
+  completeSettlement,
   getFinancialAuditTransactions
 };

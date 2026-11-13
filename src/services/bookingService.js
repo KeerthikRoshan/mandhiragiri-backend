@@ -532,6 +532,42 @@ const getFinancialAuditTransactions = async (filters = {}) => {
   };
 };
 
+/**
+ * Get completed settlements list (both Priest Settlements and Client Receivables).
+ */
+const getCompletedSettlements = async (filters = {}) => {
+  const completed = await bookingModel.getCompletedSettlements(filters);
+  return {
+    settlements: completed,
+    count: completed.length
+  };
+};
+
+/**
+ * Complete a client receivable or priest settlement.
+ */
+const completeSettlement = async (bookingId, payload, user) => {
+  const party = payload.party || 'CLIENT';
+  const notes = payload.notes || null;
+  const createdBy = user?.id || null;
+
+  const result = await bookingModel.completeSettlement({
+    bookingId,
+    party,
+    notes,
+    createdBy
+  });
+
+  if (result.notFound) {
+    const error = new Error('Booking not found.');
+    error.statusCode = 404;
+    error.isOperational = true;
+    throw error;
+  }
+
+  return result;
+};
+
 module.exports = {
   checkAvailability,
   createBooking,
@@ -545,5 +581,7 @@ module.exports = {
   listEventTypes,
   getFinancialAuditSummary,
   getPriestSettlements,
+  getCompletedSettlements,
+  completeSettlement,
   getFinancialAuditTransactions
 };

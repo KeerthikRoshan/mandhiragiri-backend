@@ -591,7 +591,8 @@ const createLeaveRequest = async ({ staffId, startDate, endDate, leaveType, reas
   try {
     if (!isExternalConn) await connection.beginTransaction();
 
-    await connection.execute('SELECT id FROM staff WHERE id = ? FOR UPDATE;', [staffId]);
+    const [staffRows] = await connection.execute('SELECT id, staff_id, name_english, name_tamil FROM staff WHERE id = ? FOR UPDATE;', [staffId]);
+    const staffMember = staffRows[0] || null;
     const [overlaps] = await connection.execute(`
       SELECT id FROM leave_requests
       WHERE staff_id = ? AND status IN ('PENDING', 'APPROVED')
@@ -618,6 +619,9 @@ const createLeaveRequest = async ({ staffId, startDate, endDate, leaveType, reas
       payload: {
         leaveId,
         staffId,
+        staffName: staffMember?.name_english || '',
+        staffNameEn: staffMember?.name_english || '',
+        staffNameTa: staffMember?.name_tamil || staffMember?.name_english || '',
         startDate,
         endDate,
         leaveType,
@@ -733,11 +737,12 @@ const completeEvent = async ({ eventId, staffId, notes }, conn = null) => {
   try {
     if (!isExternalConn) await connection.beginTransaction();
 
-    const [staffRows] = await connection.query('SELECT staff_id FROM staff WHERE id = ? LIMIT 1;', [staffId]);
-    const staffCode = staffRows.length > 0 ? staffRows[0].staff_id : String(staffId);
+    const [staffRows] = await connection.execute('SELECT id, staff_id, name_english, name_tamil FROM staff WHERE id = ? LIMIT 1;', [staffId]);
+    const staffMember = staffRows[0] || null;
+    const staffCode = staffMember ? staffMember.staff_id : String(staffId);
 
-    const [existing] = await connection.query(`
-      SELECT id, booking_number, title, date_key, priest_id, priest_name, status
+    const [existing] = await connection.execute(`
+      SELECT id, booking_number, title, date_key, client_name, client_phone, priest_id, priest_name, status
       FROM bookings
       WHERE id = ? 
         AND (priest_id = ? OR priest_id = ? OR id IN (SELECT booking_id FROM booking_priests WHERE staff_id = ?))
@@ -780,8 +785,13 @@ const completeEvent = async ({ eventId, staffId, notes }, conn = null) => {
         bookingId: eventId,
         bookingNumber: booking.booking_number,
         title: booking.title,
+        clientName: booking.client_name || null,
         staffId,
+        staffNameEn: staffMember ? staffMember.name_english : (booking.priest_name || 'Staff'),
+        staffNameTa: staffMember ? staffMember.name_tamil : (booking.priest_name || 'பணியாளர்'),
         priestId: booking.priest_id,
+        priestName: booking.priest_name || (staffMember ? staffMember.name_english : 'Staff'),
+        dateKey: booking.date_key,
         notes: notes || null
       }
     });
