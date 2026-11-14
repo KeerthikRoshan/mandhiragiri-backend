@@ -680,8 +680,17 @@ const submitAttendance = async (input, userId) => {
     };
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') {
+      const existing = await projectModel.getAttendanceByStaffAndDate(staff.id, input.dateKey);
       throw new ApiError(409, 'இன்றைய வருகைப் பதிவு ஏற்கனவே முடிந்துள்ளது. மீண்டும் பதிவு செய்ய இயலாது.', true, {
-        attendance: 'Attendance has already been recorded for today (Strict Once-Per-Day Rule).'
+        attendance: 'Attendance has already been recorded for today (Strict Once-Per-Day Rule).',
+        record: existing ? {
+          id: `${staff.id}_${input.dateKey}`,
+          staffId: String(staff.id),
+          dateKey: input.dateKey,
+          status: existing.status ? String(existing.status).toLowerCase() : 'present',
+          submissionTime: existing.submission_time ? displayTime(existing.submission_time) : undefined,
+          remarks: existing.remarks
+        } : undefined
       });
     }
     throw error;

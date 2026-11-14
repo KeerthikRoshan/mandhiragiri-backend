@@ -212,7 +212,7 @@ describe('Stage 5: Scheduled Processing & Cron Automation Tests', () => {
     // Pattern C: UTC initialization failure destroys the connection and prevents reuse
     const testPool = mysql.createPool({
       host: process.env.DB_HOST || '127.0.0.1',
-      port: parseInt(process.env.DB_PORT, 10) || 3306,
+      port: parseInt(process.env.DB_PORT, 10) || 3308,
       user: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD || '',
       database: process.env.DB_NAME || 'mandhiragiri_db',

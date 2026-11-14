@@ -12,7 +12,7 @@ describe('Stage 1: Migration 014 Repeatability & Schema Verification in Isolated
   before(async () => {
     connection = await mysql.createConnection({
       host: '127.0.0.1',
-      port: 3306,
+      port: 3308,
       user: 'root',
       password: '',
       multipleStatements: true

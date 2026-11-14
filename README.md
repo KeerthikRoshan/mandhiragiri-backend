@@ -38,7 +38,7 @@ Routes → Validation → Middleware → Controller → Service → Model → My
 ### Step 1: Start MySQL in XAMPP
 1. Open the **XAMPP Control Panel**.
 2. Click **Start** next to **MySQL**.
-3. Verify that MySQL is running on port `3306` (default).
+3. Verify that MySQL is running on port `3308` (default).
 
 > *Note: By default in XAMPP, the MySQL root user has no password (`password: ""`).*
 
@@ -66,7 +66,7 @@ CORS_ORIGIN=*
 
 # MySQL Database (XAMPP Default)
 DB_HOST=127.0.0.1
-DB_PORT=3306
+DB_PORT=3308
 DB_USER=root
 DB_PASSWORD=
 DB_NAME=mandhiragiri_db

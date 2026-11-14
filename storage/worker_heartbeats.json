@@ -1,12 +1,12 @@
 {
-  "last_run_at": "2026-11-13T18:57:37.524Z",
-  "duration_ms": 10,
+  "last_run_at": "2026-11-14T19:34:39.386Z",
+  "duration_ms": 6,
   "status": "SUCCESS",
   "reminders": {
     "totalProcessed": 0,
     "totalCompleted": 0,
     "totalCancelled": 0,
-    "durationMs": 3
+    "durationMs": 2
   },
   "outbox": {
     "totalProcessed": 0,
@@ -18,7 +18,7 @@
     "totalFailed": 0,
     "totalRetried": 0,
     "totalSkipped": 0,
-    "durationMs": 3
+    "durationMs": 1
   },
   "error": null
 }
