@@ -76,12 +76,30 @@ const bookingRules = [
   body('dateKey')
     .matches(/^\d{4}-\d{2}-\d{2}$/)
     .withMessage('dateKey or booking_date must be a valid date in YYYY-MM-DD format.'),
+  body('startTime').trim()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](\s*(AM|PM|am|pm))?$/)
+    .withMessage('Start time must be a valid time format (e.g. 05:30 PM or 17:30).'),
+  body('durationMinutes')
+    .isInt({ min: 15, max: 1440 })
+    .withMessage('Duration must be between 15 and 1440 minutes.'),
   body('title').trim()
     .isLength({ min: 2, max: 150 })
-    .withMessage('Title must be between 2 and 150 characters.'),
+    .withMessage('Title must be between 2 and 150 characters.')
+    .custom((val) => {
+      if (!val || !val.trim()) {
+        throw new Error('Title cannot be whitespace only.');
+      }
+      return true;
+    }),
   body('clientName').trim()
     .isLength({ min: 2, max: 100 })
-    .withMessage('Client name must be between 2 and 100 characters.'),
+    .withMessage('Client name must be between 2 and 100 characters.')
+    .custom((val) => {
+      if (!val || !val.trim()) {
+        throw new Error('Client name cannot be whitespace only.');
+      }
+      return true;
+    }),
   body('phone').trim()
     .matches(/^[0-9+\s-]{10,15}$/)
     .withMessage('Enter a valid client phone number (10 to 15 digits).'),
@@ -136,12 +154,30 @@ const updateBookingRules = [
   body('dateKey').optional({ values: 'falsy' })
     .matches(/^\d{4}-\d{2}-\d{2}$/)
     .withMessage('dateKey must be a valid date in YYYY-MM-DD format.'),
+  body('startTime').optional({ values: 'falsy' }).trim()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9](\s*(AM|PM|am|pm))?$/)
+    .withMessage('Start time must be a valid time format (e.g. 05:30 PM or 17:30).'),
+  body('durationMinutes').optional({ values: 'falsy' })
+    .isInt({ min: 15, max: 1440 })
+    .withMessage('Duration must be between 15 and 1440 minutes.'),
   body('title').optional({ values: 'falsy' }).trim()
     .isLength({ min: 2, max: 150 })
-    .withMessage('Title must be between 2 and 150 characters.'),
+    .withMessage('Title must be between 2 and 150 characters.')
+    .custom((val) => {
+      if (val !== undefined && (!val || !val.trim())) {
+        throw new Error('Title cannot be whitespace only.');
+      }
+      return true;
+    }),
   body('clientName').optional({ values: 'falsy' }).trim()
     .isLength({ min: 2, max: 100 })
-    .withMessage('Client name must be between 2 and 100 characters.'),
+    .withMessage('Client name must be between 2 and 100 characters.')
+    .custom((val) => {
+      if (val !== undefined && (!val || !val.trim())) {
+        throw new Error('Client name cannot be whitespace only.');
+      }
+      return true;
+    }),
   body('phone').optional({ values: 'falsy' }).trim()
     .matches(/^[0-9+\s-]{10,15}$/)
     .withMessage('Enter a valid client phone number (10 to 15 digits).'),
