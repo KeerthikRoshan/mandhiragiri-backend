@@ -24,6 +24,7 @@ const { pool, closePool } = require('../src/config/database');
 const { runReminderWorker } = require('./processBookingReminders');
 const { runOutboxWorker } = require('./processOutbox');
 const { runPushWorker } = require('./processPushJobs');
+const { cleanExpiredDailyPanchangam } = require('../src/services/panchangamService');
 
 const LOCK_NAME = 'mandhiragiri_cron_lock';
 const CRON_BUDGET_MS = 45000;
@@ -127,6 +128,16 @@ const runMasterCron = async (options = {}) => {
       });
     } else {
       console.log('[CronRunner] Time budget exhausted before push stage.');
+    }
+
+    // 5. Stage D: Daily Panchangam Expired Cache Cleanup
+    if (isTimeBudgetAvailable()) {
+      try {
+        const cleanedCount = await cleanExpiredDailyPanchangam();
+        summary.stages.panchangamCleanup = { cleanedCount, status: 'SUCCESS' };
+      } catch (cleanErr) {
+        summary.stages.panchangamCleanup = { error: cleanErr.message, status: 'FAILED' };
+      }
     }
 
     summary.status = 'SUCCESS';
