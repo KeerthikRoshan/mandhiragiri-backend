@@ -326,5 +326,10 @@ module.exports = {
   validateBalanceReport: validate([
     query('fromDate').custom((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))),
     query('toDate').custom((value, { req }) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && value >= req.query.fromDate)
+  ]),
+  validateUserId: validate([
+    param('user_id')
+      .isInt({ min: 1 })
+      .withMessage('user_id must be a positive integer.')
   ])
 };

@@ -278,6 +278,16 @@ const adminProfile = asyncHandler(async (req, res) => {
   return sendSuccess(res, 'Profile retrieved.', data);
 });
 
+const adminProfileByUserId = asyncHandler(async (req, res) => {
+  const data = await projectService.getAdminProfile(req.params.user_id);
+  return sendSuccess(res, 'Administrator profile retrieved.', data);
+});
+
+const staffProfileByUserId = asyncHandler(async (req, res) => {
+  const data = await projectService.getStaffProfileByUserId(req.params.user_id);
+  return sendSuccess(res, 'Staff profile retrieved.', data);
+});
+
 const updateAdminProfile = asyncHandler(async (req, res) => {
   const data = await projectService.updateAdminProfile(req.body, req.user.id);
   return sendSuccess(res, 'சுயவிவரம் வெற்றிகரமாக மாற்றப்பட்டது (Profile updated successfully).', data);
@@ -356,6 +366,8 @@ module.exports = {
   staffDashboard,
   completeEvent,
   adminProfile,
+  adminProfileByUserId,
+  staffProfileByUserId,
   updateAdminProfile,
   uploadAdminAvatar,
   uploadStaffAvatar,

@@ -136,14 +136,14 @@ The import is resumable and safe to rerun: it upserts one row per date and locat
 
 ### Profile image uploads
 
-Administrators (`ADMIN` or `SUPER_ADMIN`) can upload an image for their own profile or for a staff member. Apply migration `006_add_admin_avatar_url.sql` with `npm run migrate` before using the admin-profile upload endpoint. Uploads use `multipart/form-data` with one file field named `image`; accepted formats are JPEG, PNG, and WebP, up to 5 MB. The backend checks both the declared MIME type and the file signature, stores files under separate `uploads/admin/` and `uploads/staff/` folders with generated filenames, and makes them publicly readable at `/uploads/...`. The resulting relative URL is returned as `imageUrl` and is also exposed as `avatarUrl` in the relevant profile response.
+Administrators (`ADMIN` or `SUPER_ADMIN`) can upload an image for their own profile or for a staff member. Run `npm run migrate` against the target database before using these endpoints. Uploads use `multipart/form-data` with one file field named `image`; accepted formats are JPEG/JPG, PNG, WebP, GIF, BMP, TIFF, AVIF, HEIC, and HEIF, up to 5 MB. SVG is not supported. The backend checks both the declared MIME type and the file signature, stores files under separate `uploads/admin/` and `uploads/staff/` folders with generated filenames, and makes them publicly readable at `/uploads/...`. The resulting relative URL is returned as `imageUrl` and is also exposed as `avatarUrl` in the relevant profile response.
 
 | Method | Endpoint | Access |
 | --- | --- | --- |
 | `POST` | `/api/v1/admin/profile/image` | Admin or Super Admin; updates the caller's profile image |
 | `POST` | `/api/v1/admin/staff/:staffId/image` | Admin or Super Admin; updates that staff profile's image |
 
-Send a bearer access token and form-data key `image` with a JPEG, PNG, or WebP file. Replacing an image removes the previous backend-managed file after the database update succeeds.
+Send a bearer access token and form-data key `image` with a supported file. Replacing an image removes the previous backend-managed file after the database update succeeds.
 
 ---
 
@@ -254,6 +254,249 @@ Send a bearer access token and form-data key `image` with a JPEG, PNG, or WebP f
   }
   ```
 - **Behavior**: Validates password complexity, updates hash using `bcrypt` (12 rounds), clears `must_change_password`, and terminates all active refresh sessions to enforce re-login.
+
+### Staff and administrator profile APIs (updated 2026-11-15)
+
+This update adds profile lookups by `user_id`, aligns staff creation validation with generated passwords and default designations, and expands profile image uploads to common raster formats.
+
+All endpoints below use the base URL `http://localhost:5000/api/v1` locally. Replace the host and port when calling another environment.
+
+| Method | Endpoint | Purpose | Access |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/admin/profile` | Get the signed-in administrator's profile | Admin or Super Admin |
+| `GET` | `/api/v1/admin/profile/:user_id` | Get one admin profile by account ID | Admin or Super Admin |
+| `GET` | `/api/v1/staff/:user_id` | Get one staff profile by linked account ID | Admin or Super Admin |
+| `GET` | `/api/v1/auth/me` | Get the signed-in user's profile | Any authenticated user |
+| `GET` | `/api/v1/staff` | List staff, optionally filtered by `status` and `search` | Admin or Super Admin |
+| `POST` | `/api/v1/createStaff` | Create a staff account | Admin or Super Admin |
+| `POST` | `/api/v1/admin/profile/image` | Upload the signed-in admin's profile image | Admin or Super Admin |
+| `POST` | `/api/v1/admin/staff/:staffId/image` | Upload a staff member's profile image | Admin or Super Admin |
+
+For admin and staff lookups by ID, `user_id` is the positive integer `users.id`, not the staff row ID or the formatted `staffId`. The admin lookup only returns users with the `ADMIN` or `SUPER_ADMIN` role. Both profile-by-ID endpoints require:
+
+```http
+Authorization: Bearer <valid-admin-access-token>
+```
+
+No query string or request body is needed for either lookup. For example:
+
+```http
+GET /api/v1/admin/profile/42
+GET /api/v1/staff/57
+```
+
+#### Admin profile response
+
+Successful requests return HTTP `200` with the standard response envelope. The profile data includes account fields and the fields stored in `admin_profiles`.
+
+```json
+{
+  "status": 1,
+  "success": true,
+  "message": "Administrator profile retrieved.",
+  "data": {
+    "id": "42",
+    "userId": "42",
+    "nameEnglish": "Example Admin",
+    "nameTamil": "Example Name",
+    "titleTamil": null,
+    "phone": "+919876500001",
+    "email": "admin@example.com",
+    "avatarUrl": null,
+    "addressTamil": null,
+    "metrics": {
+      "yearsExperience": null,
+      "horoscopeCount": null,
+      "homamCount": null,
+      "accuracyRate": null
+    },
+    "ashramDetails": {
+      "peedamNameTamil": null,
+      "morningHours": null,
+      "eveningHours": null
+    },
+    "updatedAt": null
+  },
+  "errors": null,
+  "timestamp": "2026-11-15T10:00:00.000Z"
+}
+```
+
+#### Staff profile response
+
+`user_id` selects the staff row through `staff.user_id`. The response also includes the related account email.
+
+```json
+{
+  "status": 1,
+  "success": true,
+  "message": "Staff profile retrieved.",
+  "data": {
+    "id": "8",
+    "staffId": "MJSTF00008",
+    "userId": "57",
+    "nameEnglish": "Example Priest",
+    "nameTamil": "Example Name",
+    "staffRole": "Priest",
+    "designation": "Priest",
+    "phone": "+919876500002",
+    "phoneDisplay": "91987XXXXXXX",
+    "tradition": null,
+    "expertise": null,
+    "certification": null,
+    "languagesSpoken": null,
+    "avatarUrl": null,
+    "status": "active",
+    "userStatus": "active",
+    "isDeleted": false,
+    "createdAt": null,
+    "updatedAt": null,
+    "designationTamil": "Priest",
+    "designationEnglish": "Priest",
+    "roleCategory": "PRIEST",
+    "roleBadge": "Priest",
+    "fullTitleTamil": "Example Name - Priest",
+    "traditionTamil": null,
+    "certificationTamil": null,
+    "expertiseTamil": null,
+    "languagesTamil": null,
+    "metrics": {
+      "totalBookings": 0,
+      "thisWeekBookings": 0,
+      "conflictsCount": 0
+    },
+    "tabCounts": {
+      "past": 0,
+      "active": 0,
+      "upcoming": 0
+    },
+    "email": "priest@example.com"
+  },
+  "errors": null,
+  "timestamp": "2026-11-15T10:00:00.000Z"
+}
+```
+
+#### Create staff request
+
+`nameEnglish`, `nameTamil`, and `phone` are required. The phone must be unique and contain 10-15 digits (an optional leading `+`, spaces, or hyphens are accepted). `staffRole` can be `Priest` or `Assistant`; it defaults to `Priest`. `designation` defaults based on the role. If `password` is omitted, the API generates one and returns it once as `temporaryPassword`; a supplied password must be at least 6 characters.
+
+Optional fields: `email` (valid email), `tradition`, `expertise`, `certification`, `languagesSpoken` (up to 255 characters each), and `avatarUrl` (up to 500 characters).
+
+```http
+POST /api/v1/createStaff
+Authorization: Bearer <valid-admin-access-token>
+Content-Type: application/json
+```
+
+```json
+{
+  "nameEnglish": "Example Priest",
+  "nameTamil": "உதாரண புரோகிதர்",
+  "staffRole": "Priest",
+  "designation": "Priest",
+  "phone": "+919876500003",
+  "email": "priest@example.com",
+  "tradition": "Vedic",
+  "expertise": "Homam",
+  "certification": "Certified",
+  "languagesSpoken": "Tamil"
+}
+```
+
+Successful creation returns HTTP `201`; the `data` object contains the new staff profile and the generated `temporaryPassword` when no password was supplied. Use `/api/v1/createStaff`; `POST /api/v1/staff` is not a registered route.
+
+```json
+{
+  "status": 1,
+  "success": true,
+  "message": "புரோகிதர் வெற்றிகரமாக சேர்க்கப்பட்டார்.",
+  "data": {
+    "id": "8",
+    "staffId": "MJSTF00008",
+    "userId": "57",
+    "nameEnglish": "Example Priest",
+    "nameTamil": "உதாரண புரோகிதர்",
+    "staffRole": "Priest",
+    "designation": "Priest",
+    "phone": "+919876500003",
+    "status": "active",
+    "temporaryPassword": "<generated-once>"
+  },
+  "errors": null,
+  "timestamp": "2026-11-15T10:00:00.000Z"
+}
+```
+
+#### Image upload response
+
+Send exactly one file as the `image` form-data field. The `staffId` upload parameter is the numeric staff row ID. A successful upload returns HTTP `200`:
+
+```json
+{
+  "status": 1,
+  "success": true,
+  "message": "Admin profile image uploaded successfully.",
+  "data": {
+    "imageUrl": "/uploads/admin/<generated-file>.png",
+    "category": "admin"
+  },
+  "errors": null,
+  "timestamp": "2026-11-15T10:00:00.000Z"
+}
+```
+
+Staff image uploads return the same shape with `category: "staff"` and an `/uploads/staff/...` URL.
+
+#### Refresh an expired access token
+
+Send `POST /api/v1/auth/refresh` with the current refresh token:
+
+```json
+{
+  "refreshToken": "<refresh-token>"
+}
+```
+
+The success response contains a new `data.token` (access token) and a rotated `data.refreshToken`. Replace both saved tokens before retrying the original request.
+
+```json
+{
+  "status": 1,
+  "success": true,
+  "message": "Session token refreshed successfully.",
+  "data": {
+    "token": "<new-access-token>",
+    "refreshToken": "<rotated-refresh-token>",
+    "expiresAt": "2026-11-16T10:00:00.000Z",
+    "user": {
+      "id": 42,
+      "nameEnglish": "Example Admin",
+      "nameTamil": null,
+      "role": "ADMIN",
+      "phone": "+919876500001"
+    }
+  },
+  "errors": null,
+  "timestamp": "2026-11-15T10:00:00.000Z"
+}
+```
+
+#### Common errors
+
+All errors use the same envelope with `status: 0`, `success: false`, `data: null`, an `errors` value, and a `timestamp`.
+
+| HTTP status | Example message | Meaning |
+| --- | --- | --- |
+| `400` | `Validation failed for the submitted fields.` | `user_id` must be a positive integer or a request field is invalid. |
+| `401` | `Access token has expired. Please refresh your session.` | Refresh the access token and retry. |
+| `409` | `Phone number already registered.` | The phone number is already assigned to an account. |
+| `404` | `Administrator profile not found.` | The ID is not an ADMIN/SUPER_ADMIN account. |
+| `404` | `Staff profile not found.` | No staff record is linked to that `users.id`. |
+| `422` | `The uploaded file content does not match a supported image format.` | The file bytes do not match the declared image type, or the type is unsupported. |
+| `404` | `Route not found: GET /api/v1/staff/57` | The request is reaching a server that has not loaded the updated route; restart/deploy the current backend and confirm `baseUrl`. |
+
+The local database was migrated through migration `014` on 2026-11-15. Run `npm run migrate` against each deployment database before deploying these changes.
 
 ### 3. Bookings and Balances
 
