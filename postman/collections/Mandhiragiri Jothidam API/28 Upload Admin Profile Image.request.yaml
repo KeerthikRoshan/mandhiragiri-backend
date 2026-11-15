@@ -11,7 +11,7 @@ body:
     - key: image
       type: file
       src: "{{adminImageFile}}"
-      contentType: image/jpeg
+      description: 'JPEG/JPG, PNG, WebP, GIF, BMP, TIFF, AVIF, HEIC, or HEIF; max 5 MB. SVG is not supported.'
 scripts:
   - type: afterResponse
     code: |-

@@ -17,8 +17,6 @@ variables:
   today: ""
   leaveStart: ""
   leaveEnd: ""
-  adminImageFile: ""
-  staffImageFile: ""
 scripts:
   - type: http:beforeRequest
     code: |-

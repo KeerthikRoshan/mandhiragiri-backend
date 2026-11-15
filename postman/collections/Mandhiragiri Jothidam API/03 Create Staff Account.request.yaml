@@ -1,5 +1,5 @@
 $kind: http-request
-url: "{{baseUrl}}/staff"
+url: "{{baseUrl}}/createStaff"
 method: POST
 headers:
   Content-Type: application/json
@@ -11,7 +11,7 @@ body:
       "nameEnglish": "{{staffName}}",
       "nameTamil": "சோதனை புரோகிதர்",
       "designationTamil": "புரோகிதர்",
-      "designationEnglish": "Priest",
+      "designation": "Priest",
       "roleCategory": "PRIEST",
       "roleBadge": "TEST PRIEST",
       "phone": "{{staffPhone}}",
