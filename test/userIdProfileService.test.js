@@ -47,13 +47,15 @@ test('returns admin profile details with the requested user ID', async () => {
     name_english: 'Admin Name',
     name_tamil: 'நிர்வாகி',
     years_experience: '10',
-    horoscope_count: '20'
+    horoscope_count: '20',
+    avatar_url: '/uploads/admin/test-admin-uuid.png'
   });
 
   try {
     const profile = await projectService.getAdminProfile('42');
     assert.equal(profile.userId, '42');
     assert.equal(profile.nameEnglish, 'Admin Name');
+    assert.equal(profile.avatarUrl, '/uploads/admin/test-admin-uuid.png');
     assert.equal(profile.metrics.yearsExperience, '10');
     assert.equal(profile.metrics.horoscopeCount, '20');
   } finally {
@@ -71,6 +73,7 @@ test('returns staff details and email for the requested user ID', async () => {
     staff_role: 'Priest',
     designation: 'Priest',
     phone: '9876543210',
+    avatar_url: '/uploads/staff/test-staff-uuid.png',
     status: 'Active',
     user_status: 'ACTIVE',
     user_email: 'staff@example.com'
@@ -81,8 +84,38 @@ test('returns staff details and email for the requested user ID', async () => {
     assert.equal(profile.userId, '42');
     assert.equal(profile.nameEnglish, 'Staff Name');
     assert.equal(profile.email, 'staff@example.com');
+    assert.equal(profile.avatarUrl, '/uploads/staff/test-staff-uuid.png');
   } finally {
     projectModel.getStaffProfileByUserId = originalGetStaffProfileByUserId;
+  }
+});
+
+test('updateAdminProfile returns complete admin profile including avatarUrl', async () => {
+  const originalUpdateAdminProfile = projectModel.updateAdminProfile;
+  const originalGetAdminProfile = projectModel.getAdminProfile;
+  projectModel.updateAdminProfile = async ({ userId, phone, email }) => ({
+    id: userId,
+    mobile: phone,
+    email
+  });
+  projectModel.getAdminProfile = async (userId) => ({
+    id: userId,
+    user_id: userId,
+    name_english: 'Admin Name',
+    name_tamil: 'நிர்வாகி',
+    mobile: '9876543210',
+    email: 'admin@example.com',
+    avatar_url: '/uploads/admin/updated-avatar.png'
+  });
+
+  try {
+    const result = await projectService.updateAdminProfile({ phone: '9876543210', email: 'admin@example.com' }, '42');
+    assert.equal(result.userId, '42');
+    assert.equal(result.avatarUrl, '/uploads/admin/updated-avatar.png');
+    assert.equal(result.email, 'admin@example.com');
+  } finally {
+    projectModel.updateAdminProfile = originalUpdateAdminProfile;
+    projectModel.getAdminProfile = originalGetAdminProfile;
   }
 });
 

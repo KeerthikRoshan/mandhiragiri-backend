@@ -17,7 +17,7 @@ router.get('/panchangam/today', validation.validatePanchangamQuery, controller.p
 router.put('/admin/panchangam', ...adminOnly, validation.validatePanchangam, controller.savePanchangam);
 router.get('/schedule/bookings', ...adminOnly, validation.validateSchedule, controller.scheduleBookings);
 router.get('/staff', ...adminOnly, validation.validateStaffList, controller.listStaff);
-router.get('/staff/:user_id', ...adminOnly, validation.validateUserId, controller.staffProfileByUserId);
+router.get('/staff/:user_id', ...adminOrStaff, validation.validateUserId, controller.staffProfileByUserId);
 router.post('/createStaff', ...adminOnly, validation.validateCreateStaff, controller.createStaff);
 router.put('/staff/:id', ...adminOnly, validation.validateUpdateStaff, controller.updateStaff);
 router.get('/attendance/daily', ...adminOnly, validation.validateAttendanceQuery, controller.dailyAttendance);

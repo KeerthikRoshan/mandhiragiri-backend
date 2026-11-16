@@ -28,13 +28,16 @@ const findUserByMobileAndRole = async (mobileNumber, role = null) => {
       u.mobile AS mobile_number,
       u.password_hash,
       u.name AS name_english,
-      NULL AS name_tamil,
-      NULL AS title,
+      p.name_tamil AS name_tamil,
+      p.title_tamil AS title,
       u.email,
-      NULL AS avatar_url,
+      COALESCE(p.avatar_url, s.avatar_url) AS avatar_url,
+      p.address_tamil AS address_tamil,
       LOWER(u.status) AS status
     FROM users u
     INNER JOIN roles r ON r.id = u.role_id
+    LEFT JOIN admin_profiles p ON p.user_id = u.id
+    LEFT JOIN staff s ON s.user_id = u.id
     WHERE u.mobile LIKE ? ${roleFilter} AND UPPER(u.status) != 'DELETED'
     ORDER BY FIELD(r.name, 'SUPER_ADMIN', 'ADMIN', 'STAFF', 'PRIEST', 'ASSISTANT')
     LIMIT 1;
@@ -91,13 +94,16 @@ const findUserById = async (id) => {
       u.mobile AS mobile_number,
       u.password_hash,
       u.name AS name_english,
-      NULL AS name_tamil,
-      NULL AS title,
+      p.name_tamil AS name_tamil,
+      p.title_tamil AS title,
       u.email,
-      NULL AS avatar_url,
+      COALESCE(p.avatar_url, s.avatar_url) AS avatar_url,
+      p.address_tamil AS address_tamil,
       LOWER(u.status) AS status
     FROM users u
     INNER JOIN roles r ON r.id = u.role_id
+    LEFT JOIN admin_profiles p ON p.user_id = u.id
+    LEFT JOIN staff s ON s.user_id = u.id
     WHERE u.id = ? AND UPPER(u.status) != 'DELETED'
     LIMIT 1;
   `;

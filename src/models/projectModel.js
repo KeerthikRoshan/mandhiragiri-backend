@@ -394,9 +394,9 @@ const getStaffProfileByUserId = async (userId) => {
     SELECT s.*, u.email AS user_email, u.status AS user_status
     FROM staff s
     INNER JOIN users u ON u.id = s.user_id
-    WHERE s.user_id = ?
+    WHERE s.user_id = ? OR s.id = ?
     LIMIT 1;
-  `, [userId]);
+  `, [userId, userId]);
   return rows[0] || null;
 };
 

@@ -901,13 +901,8 @@ const uploadStaffAvatar = async (staffId, file) => profileImageService.uploadPro
 });
 
 const updateAdminProfile = async (input, userId) => {
-  const row = await projectModel.updateAdminProfile({ ...input, userId });
-  return {
-    phone: row.mobile,
-    email: row.email,
-    addressTamil: row.address_tamil,
-    updatedAt: dateIso(row.updated_at)
-  };
+  await projectModel.updateAdminProfile({ ...input, userId });
+  return getAdminProfile(userId);
 };
 
 const recordBookingPayment = async (input, userId, conn = null) => {

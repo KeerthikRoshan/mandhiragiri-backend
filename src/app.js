@@ -20,10 +20,21 @@ const uploadsDirectory = path.resolve(__dirname, '..', 'uploads');
 app.use(helmet());
 
 // 2. CORS configuration
-const allowedOrigins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*';
+const rawCorsOrigin = process.env.CORS_ORIGIN || '*';
+const allowedOrigins = rawCorsOrigin === '*'
+  ? '*'
+  : rawCorsOrigin.split(',').map((o) => o.trim());
+
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile applications, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins === '*' || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-idempotency-key', 'idempotency-key', 'X-Idempotency-Key'],
     credentials: true
