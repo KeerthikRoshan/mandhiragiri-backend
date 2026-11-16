@@ -149,15 +149,15 @@ module.exports = {
       })
       .withMessage('Staff role must be either Priest or Assistant.'),
     body('designation')
+      .optional({ values: 'falsy' })
       .trim()
-      .notEmpty().withMessage('Designation is required.')
       .isLength({ min: 1, max: 150 }).withMessage('Designation must be at most 150 characters.'),
     body('phone')
       .trim()
       .notEmpty().withMessage('Mobile number is required.')
       .matches(/^\+?[0-9\s-]{10,15}$/).withMessage('Enter a valid 10-15 digit phone number.'),
     body('password')
-      .notEmpty().withMessage('Password is required.')
+      .optional({ values: 'falsy' })
       .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long.'),
     body('tradition')
       .optional({ values: 'falsy' })
@@ -326,5 +326,10 @@ module.exports = {
   validateBalanceReport: validate([
     query('fromDate').custom((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))),
     query('toDate').custom((value, { req }) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && value >= req.query.fromDate)
+  ]),
+  validateUserId: validate([
+    param('user_id')
+      .isInt({ min: 1 })
+      .withMessage('user_id must be a positive integer.')
   ])
 };

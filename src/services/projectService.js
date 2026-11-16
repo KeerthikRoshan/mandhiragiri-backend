@@ -859,6 +859,8 @@ const getAdminProfile = async (userId) => {
   if (!row) throw ApiError.notFound('Administrator profile not found.');
   return {
     id: String(row.id),
+    userId: String(row.user_id || row.id),
+    nameEnglish: row.name_english,
     nameTamil: row.name_tamil || row.name_english,
     titleTamil: row.title_tamil,
     phone: row.mobile,
@@ -875,8 +877,15 @@ const getAdminProfile = async (userId) => {
       peedamNameTamil: row.peedam_name_tamil,
       morningHours: row.morning_hours,
       eveningHours: row.evening_hours
-    }
+    },
+    updatedAt: row.updated_at ? dateIso(row.updated_at) : null
   };
+};
+
+const getStaffProfileByUserId = async (userId) => {
+  const row = await projectModel.getStaffProfileByUserId(userId);
+  if (!row) throw ApiError.notFound('Staff profile not found.');
+  return { ...formatStaff(row), email: row.user_email || null };
 };
 
 const uploadAdminAvatar = async (userId, file) => profileImageService.uploadProfileImage({
@@ -972,6 +981,7 @@ module.exports = {
   getStaffDashboard,
   completeEvent,
   getAdminProfile,
+  getStaffProfileByUserId,
   uploadAdminAvatar,
   uploadStaffAvatar,
     updateAdminProfile,

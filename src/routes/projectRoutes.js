@@ -17,6 +17,7 @@ router.get('/panchangam/today', validation.validatePanchangamQuery, controller.p
 router.put('/admin/panchangam', ...adminOnly, validation.validatePanchangam, controller.savePanchangam);
 router.get('/schedule/bookings', ...adminOnly, validation.validateSchedule, controller.scheduleBookings);
 router.get('/staff', ...adminOnly, validation.validateStaffList, controller.listStaff);
+router.get('/staff/:user_id', ...adminOnly, validation.validateUserId, controller.staffProfileByUserId);
 router.post('/createStaff', ...adminOnly, validation.validateCreateStaff, controller.createStaff);
 router.put('/staff/:id', ...adminOnly, validation.validateUpdateStaff, controller.updateStaff);
 router.get('/attendance/daily', ...adminOnly, validation.validateAttendanceQuery, controller.dailyAttendance);
@@ -31,6 +32,7 @@ router.get('/staff/me/dashboard', ...staffOnly, controller.staffDashboard);
 router.post('/events/:eventId/complete', ...staffOnly, validation.validateEventCompletion, controller.completeEvent);
 router.put('/events/:eventId/complete', ...staffOnly, validation.validateEventCompletion, controller.completeEvent);
 router.get('/admin/profile', ...adminOnly, controller.adminProfile);
+router.get('/admin/profile/:user_id', ...adminOnly, validation.validateUserId, controller.adminProfileByUserId);
 router.put('/admin/profile', ...adminOnly, validation.validateAdminProfile, controller.updateAdminProfile);
 router.get('/profile/admin', ...adminOnly, controller.adminProfile);
 router.put('/profile/admin', ...adminOnly, validation.validateAdminProfile, controller.updateAdminProfile);

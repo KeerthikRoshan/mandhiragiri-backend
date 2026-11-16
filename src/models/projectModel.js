@@ -389,6 +389,17 @@ const getStaffByUserId = async (userId) => {
   return rows[0] || null;
 };
 
+const getStaffProfileByUserId = async (userId) => {
+  const [rows] = await pool.execute(`
+    SELECT s.*, u.email AS user_email, u.status AS user_status
+    FROM staff s
+    INNER JOIN users u ON u.id = s.user_id
+    WHERE s.user_id = ?
+    LIMIT 1;
+  `, [userId]);
+  return rows[0] || null;
+};
+
 const updateStaffAvatar = async (staffId, avatarUrl) => {
   const connection = await pool.getConnection();
   try {
@@ -810,12 +821,15 @@ const completeEvent = async ({ eventId, staffId, notes }, conn = null) => {
 
 const getAdminProfile = async (userId) => {
   const [rows] = await pool.execute(`
-    SELECT u.id, u.name AS name_english, u.mobile, u.email,
+    SELECT u.id, p.user_id, u.name AS name_english, u.mobile, u.email,
       p.name_tamil, p.title_tamil, p.address_tamil, p.years_experience,
       p.horoscope_count, p.homam_count, p.accuracy_rate,
       p.peedam_name_tamil, p.morning_hours, p.evening_hours, p.avatar_url, p.updated_at
-    FROM users u LEFT JOIN admin_profiles p ON p.user_id = u.id
-    WHERE u.id = ? LIMIT 1;
+    FROM users u
+    INNER JOIN roles r ON r.id = u.role_id
+    LEFT JOIN admin_profiles p ON p.user_id = u.id
+    WHERE u.id = ? AND r.name IN ('ADMIN', 'SUPER_ADMIN')
+    LIMIT 1;
   `, [userId]);
   return rows[0] || null;
 };
@@ -974,6 +988,7 @@ module.exports = {
   getRoleByName,
   updateStaff,
   getStaffByUserId,
+  getStaffProfileByUserId,
   updateStaffAvatar,
   getDailyAttendance,
   getAttendanceByStaffAndDate,
