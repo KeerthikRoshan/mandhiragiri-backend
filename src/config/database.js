@@ -12,7 +12,7 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 10,
   queueLimit: 0,
-  charset: 'utf8mb4',
+  charset: 'utf8mb4_unicode_ci',
   dateStrings: true
 });
 
@@ -25,7 +25,7 @@ corePool.getConnection = function (cb) {
   origCoreGetConnection((err, conn) => {
     if (err) return cb(err);
     if (!conn._utcInitialized) {
-      conn.query("SET time_zone = '+00:00';", (err2) => {
+      conn.query("SET time_zone = '+00:00', collation_connection = 'utf8mb4_unicode_ci';", (err2) => {
         if (err2) {
           try {
             conn.destroy();

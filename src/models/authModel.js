@@ -38,7 +38,7 @@ const findUserByMobileAndRole = async (mobileNumber, role = null) => {
     INNER JOIN roles r ON r.id = u.role_id
     LEFT JOIN admin_profiles p ON p.user_id = u.id
     LEFT JOIN staff s ON s.user_id = u.id
-    WHERE u.mobile LIKE ? ${roleFilter} AND UPPER(u.status) != 'DELETED'
+    WHERE u.mobile LIKE ? COLLATE utf8mb4_unicode_ci ${roleFilter} AND UPPER(u.status) != 'DELETED'
     ORDER BY FIELD(r.name, 'SUPER_ADMIN', 'ADMIN', 'STAFF', 'PRIEST', 'ASSISTANT')
     LIMIT 1;
   `;
@@ -54,7 +54,32 @@ const findUserByMobileAndRole = async (mobileNumber, role = null) => {
  */
 const getStaffProfile = async (userId, phone = null) => {
   const cleanMobile = phone ? String(phone).replace(/\D/g, '').slice(-10) : '';
-  const pattern = cleanMobile ? `%${cleanMobile}` : '';
+
+  if (cleanMobile) {
+    const pattern = `%${cleanMobile}`;
+    const query = `
+      SELECT 
+        id,
+        user_id,
+        staff_id,
+        name_english,
+        name_tamil,
+        staff_role,
+        designation,
+        phone,
+        tradition,
+        expertise,
+        certification,
+        languages_spoken,
+        avatar_url,
+        status
+      FROM staff
+      WHERE user_id = ? OR phone LIKE ? COLLATE utf8mb4_unicode_ci
+      LIMIT 1;
+    `;
+    const [rows] = await pool.execute(query, [userId, pattern]);
+    return rows.length > 0 ? rows[0] : null;
+  }
 
   const query = `
     SELECT 
@@ -73,10 +98,10 @@ const getStaffProfile = async (userId, phone = null) => {
       avatar_url,
       status
     FROM staff
-    WHERE user_id = ? OR (phone LIKE ? AND ? != '')
+    WHERE user_id = ?
     LIMIT 1;
   `;
-  const [rows] = await pool.execute(query, [userId, pattern, pattern]);
+  const [rows] = await pool.execute(query, [userId]);
   return rows.length > 0 ? rows[0] : null;
 };
 
