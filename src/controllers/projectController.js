@@ -2,6 +2,7 @@ const projectService = require('../services/projectService');
 const projectModel = require('../models/projectModel');
 const { pool } = require('../config/database');
 const { executeWithIdempotency } = require('../services/apiIdempotencyService');
+const { triggerImmediateOutboxProcessing } = require('../services/outboxProcessorService');
 const { sendSuccess } = require('../utils/response');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
@@ -153,6 +154,7 @@ const staffMonthlyAttendance = asyncHandler(async (req, res) => {
 
 const submitAttendance = asyncHandler(async (req, res) => {
   const data = await projectService.submitAttendance(req.body, req.user.id);
+  triggerImmediateOutboxProcessing();
   return sendSuccess(res, 'இன்றைய வருகை வெற்றிகரமாக பதிவானது (Attendance recorded).', data);
 });
 
@@ -194,6 +196,10 @@ const decideLeave = asyncHandler(async (req, res) => {
     }
   );
 
+  if (!result.isReplay) {
+    triggerImmediateOutboxProcessing();
+  }
+
   if (result.isReplay) {
     res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
   }
@@ -227,6 +233,10 @@ const applyLeave = asyncHandler(async (req, res) => {
       };
     }
   );
+
+  if (!result.isReplay) {
+    triggerImmediateOutboxProcessing();
+  }
 
   if (result.isReplay) {
     res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');

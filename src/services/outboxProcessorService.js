@@ -505,8 +505,39 @@ const processOutboxQueue = async ({
   };
 };
 
+let isProcessingImmediate = false;
+let hasQueuedRerun = false;
+
+/**
+ * Triggers asynchronous immediate outbox queue processing and push dispatch post-commit.
+ * Ensures near real-time notification generation & FCM dispatch without waiting for cron.
+ * Concurrency-safe, non-blocking for HTTP callers, and swallows errors to protect caller lifecycle.
+ */
+const triggerImmediateOutboxProcessing = () => {
+  setImmediate(async () => {
+    if (isProcessingImmediate) {
+      hasQueuedRerun = true;
+      return;
+    }
+    isProcessingImmediate = true;
+    try {
+      do {
+        hasQueuedRerun = false;
+        const pushWorkerService = require('./pushWorkerService');
+        await processOutboxQueue({ batchSize: 20 });
+        await pushWorkerService.processPushQueue({ batchSize: 20 });
+      } while (hasQueuedRerun);
+    } catch (err) {
+      console.warn('[OUTBOX IMMEDIATE PROCESSING WARNING]', err.message);
+    } finally {
+      isProcessingImmediate = false;
+    }
+  });
+};
+
 module.exports = {
   generateBilingualContent,
   processSingleOutboxEvent,
-  processOutboxQueue
+  processOutboxQueue,
+  triggerImmediateOutboxProcessing
 };

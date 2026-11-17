@@ -222,6 +222,7 @@ const processSinglePushJob = async (job, { workerLeaseToken, fcmClient = messagi
         type: String(job.event_type || ''),
         entityType: String(job.entity_type || ''),
         entityId: String(job.entity_id || ''),
+        leaveId: String(job.entity_type === 'leave' ? job.entity_id : (job.entity_id || '')),
         bookingId: String(job.entity_id || ''),
         eventId: String(job.entity_id || ''),
         title: String(job.title_en || job.title_ta || ''),

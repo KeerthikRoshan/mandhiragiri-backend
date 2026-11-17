@@ -2,6 +2,7 @@ const bookingService = require('../services/bookingService');
 const projectModel = require('../models/projectModel');
 const { pool } = require('../config/database');
 const { executeWithIdempotency } = require('../services/apiIdempotencyService');
+const { triggerImmediateOutboxProcessing } = require('../services/outboxProcessorService');
 const { sendSuccess } = require('../utils/response');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
@@ -40,6 +41,10 @@ const createBooking = asyncHandler(async (req, res) => {
       };
     }
   );
+
+  if (!result.isReplay) {
+    triggerImmediateOutboxProcessing();
+  }
 
   if (result.isReplay) {
     res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
@@ -134,6 +139,10 @@ const updateBooking = asyncHandler(async (req, res) => {
     }
   );
 
+  if (!result.isReplay) {
+    triggerImmediateOutboxProcessing();
+  }
+
   if (result.isReplay) {
     res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
   }
@@ -167,6 +176,10 @@ const deleteBooking = asyncHandler(async (req, res) => {
       };
     }
   );
+
+  if (!result.isReplay) {
+    triggerImmediateOutboxProcessing();
+  }
 
   if (result.isReplay) {
     res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');
@@ -247,6 +260,10 @@ const recordPayment = asyncHandler(async (req, res) => {
       };
     }
   );
+
+  if (!result.isReplay) {
+    triggerImmediateOutboxProcessing();
+  }
 
   if (result.isReplay) {
     res.setHeader('X-Cache-Lookup', 'HIT - Idempotent Replay');

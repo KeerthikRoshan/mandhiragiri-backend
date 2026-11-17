@@ -679,6 +679,13 @@ const decideLeaveRequest = async ({ leaveId, decision, remarks, decidedBy }, con
     const newVersion = leaveRow.decision_version || 1;
     const eventKey = generateEventIdempotencyKey(eventType, 'leave', leaveId, `v${newVersion}`);
 
+    const startDateStr = leaveRow.start_date instanceof Date
+      ? leaveRow.start_date.toISOString().slice(0, 10)
+      : String(leaveRow.start_date).slice(0, 10);
+    const endDateStr = leaveRow.end_date instanceof Date
+      ? leaveRow.end_date.toISOString().slice(0, 10)
+      : String(leaveRow.end_date).slice(0, 10);
+
     await outboxModel.insertEventTx(connection, {
       eventType,
       entityType: 'leave',
@@ -690,7 +697,10 @@ const decideLeaveRequest = async ({ leaveId, decision, remarks, decidedBy }, con
         decision: decision.toUpperCase(),
         adminRemarks: remarks || null,
         decidedBy,
-        decisionVersion: newVersion
+        decisionVersion: newVersion,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        leaveType: leaveRow.leave_type || 'CASUAL'
       }
     });
 
